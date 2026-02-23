@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Certux Human-Readable Filesystem (The Law) Setup
+# Purpose: Masks the chaotic Linux backend with predictable, user-friendly symlinks.
+
+USER_SYSTEM_DIR="$HOME/System"
+
+# Check if the Law is already established for this user
+if [ -d "$USER_SYSTEM_DIR" ]; then
+    exit 0
+fi
+
+echo "🏛️ Establishing the Certux Law..."
+
+# Create the main human-readable container
+mkdir -p "$USER_SYSTEM_DIR"
+
+# 1. Apps (Points to where isolated container apps actually live)
+ln -s "/var/lib/flatpak/app" "$USER_SYSTEM_DIR/Apps"
+
+# 2. Drivers (Points to the kernel hardware modules)
+ln -s "/usr/lib/modules" "$USER_SYSTEM_DIR/Drivers"
+
+# 3. Settings (Points to the system configuration files)
+ln -s "/etc" "$USER_SYSTEM_DIR/Settings"
+
+# 4. The "One Hyperlink" to the Root (As you designed)
+ln -s "/" "$USER_SYSTEM_DIR/Core_OS_Root"
+
+echo "✅ Certux Law established."

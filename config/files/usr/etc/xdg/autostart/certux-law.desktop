@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Certux Law Configuration
+Exec=/usr/bin/certux-law-setup
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

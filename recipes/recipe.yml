@@ -16,8 +16,6 @@ modules:
     files:
       - source: system
         destination: /
-      - source: usr
-        destination: /usr
   - type: script
     snippets:
       - "chmod +x /usr/bin/cert-install"

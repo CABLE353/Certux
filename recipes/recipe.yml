@@ -15,8 +15,9 @@ modules:
   - type: files
     files:
       - source: system
-      - usr: /usr
-        destination: / # copies files/system/* (* means everything inside it) into your image's root folder /
+        destination: /
+      - source: usr
+        destination: /usr
   - type: script
     snippets:
       - "chmod +x /usr/bin/cert-install"

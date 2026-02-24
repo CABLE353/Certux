@@ -1,45 +1,49 @@
 #!/usr/bin/env bash
 
-# Certux System Mechanic: cert-install
-# Purpose: Intercepts package installations, routes them into a dedicated 
-# legacy container, and dynamically exports the GUI shortcut to the host OS.
+# Certux System Mechanic v1.1
+# Purpose: Dynamically routes both web packages and local .deb files into the sandbox.
 
-PACKAGE_NAME=$1
+PACKAGE_INPUT=$1
 CONTAINER_NAME="certux-legacy-layer"
-BASE_IMAGE="debian:latest" # Using Debian for maximum .deb compatibility
+BASE_IMAGE="debian:latest" 
 
-# 1. Input Validation
-if [ -z "$PACKAGE_NAME" ]; then
-    echo "Usage: cert-install <package_name>"
-    echo "Example: cert-install vlc"
+if [ -z "$PACKAGE_INPUT" ]; then
+    echo "Usage: cert-install <package_name> OR cert-install </path/to/file.deb>"
     exit 1
 fi
 
-echo "⚙️  Initializing Certux Mechanic for: $PACKAGE_NAME..."
+echo "⚙️  Initializing Certux Mechanic..."
 
-# 2. Dynamic Base Image (DBI) Initialization
-# Check if the container already exists. If not, create it silently.
+# Check if the container exists. If not, create it.
 if ! distrobox list | grep -q "$CONTAINER_NAME"; then
-    echo "📦 Building isolated legacy environment ($CONTAINER_NAME)..."
+    echo "📦 Building isolated legacy environment..."
     distrobox create --name "$CONTAINER_NAME" --image "$BASE_IMAGE" --yes > /dev/null 2>&1
-    echo "✅ Legacy environment initialized."
 fi
 
-# 3. Secure Installation
-echo "📥 Installing '$PACKAGE_NAME' inside the sandbox..."
-# Enter the container, update sources, and install the requested package
-distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update > /dev/null 2>&1 && sudo apt-get install -y $PACKAGE_NAME"
-
-# Check if the installation succeeded
-if [ $? -ne 0 ]; then
-    echo "❌ Error: Failed to install $PACKAGE_NAME."
-    exit 1
+# ==========================================
+# Phase 1: The Smart Detection Engine
+# ==========================================
+if [[ -f "$PACKAGE_INPUT" && "$PACKAGE_INPUT" == *.deb ]]; then
+    # It is a local file. We must get the absolute path so the container can find it.
+    FILE_PATH=$(realpath "$PACKAGE_INPUT")
+    echo "📥 Local .deb detected. Installing inside sandbox..."
+    
+    # Install the physical file
+    distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update > /dev/null 2>&1 && sudo apt-get install -y '$FILE_PATH'"
+    
+    # Extract the REAL application name from the file metadata for the shortcut
+    APP_NAME=$(distrobox enter "$CONTAINER_NAME" -- bash -c "dpkg-deb -f '$FILE_PATH' Package")
+else
+    # It is a web repository package
+    echo "📥 Web package detected. Downloading and installing '$PACKAGE_INPUT'..."
+    distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update > /dev/null 2>&1 && sudo apt-get install -y $PACKAGE_INPUT"
+    APP_NAME="$PACKAGE_INPUT"
 fi
 
-# 4. Host Integration (The "Harmless Trickery")
-echo "🔗 Bridging application to the Certux interface..."
-# Export the application so it appears in the host's app launcher, but runs in the container
-distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $PACKAGE_NAME"
+# ==========================================
+# Phase 2: Host Integration
+# ==========================================
+echo "🔗 Bridging '$APP_NAME' to the Certux interface..."
+distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $APP_NAME"
 
-echo "✅ Success! '$PACKAGE_NAME' is now securely installed."
-echo "You can now launch it directly from your Certux app menu."
+echo "✅ Success!"

@@ -18,6 +18,7 @@ echo "⚙️  Initializing Certux Mechanic..."
 if ! distrobox list | grep -q "$CONTAINER_NAME"; then
     echo "📦 Building isolated legacy environment..."
     distrobox create --name "$CONTAINER_NAME" --image "$BASE_IMAGE" --yes > /dev/null 2>&1
+    distrobox enter "$CONTAINER_NAME" -- bash -c "sudo dpkg --add-architecture i386 && sudo apt-get update > /dev/null 2>&1"
 fi
 
 # ==========================================

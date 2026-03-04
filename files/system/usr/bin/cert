@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Certux Universal Engine v1.0
+
+COMMAND=$1
+TARGET=$2
+CONTAINER_NAME="certux-legacy-layer"
+BASE_IMAGE="debian:latest"
+
+# Helper: Ensure container exists
+ensure_container() {
+    if ! distrobox list | grep -q "$CONTAINER_NAME"; then
+        echo "📦 Initializing Certux Subsystem..."
+        distrobox create --name "$CONTAINER_NAME" --image "$BASE_IMAGE" --yes > /dev/null 2>&1
+        distrobox enter "$CONTAINER_NAME" -- bash -c "sudo dpkg --add-architecture i386 && sudo apt-get update > /dev/null 2>&1"
+    fi
+}
+
+case "$COMMAND" in
+    upgrade)
+        echo "🔄 Upgrading Certux Ecosystem..."
+        echo "▶ Updating Host (OSTree)..."
+        sudo rpm-ostree upgrade
+        echo "▶ Updating Apps (Flatpak)..."
+        flatpak update -y
+        if distrobox list | grep -q "$CONTAINER_NAME"; then
+            echo "▶ Updating Subsystem..."
+            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update > /dev/null 2>&1 && sudo apt-get upgrade -y"
+        fi
+        echo "✅ Upgrade complete! Reboot if Host was updated."
+        ;;
+        
+    install)
+        if [ -z "$TARGET" ]; then echo "Usage: cert install <package/file>"; exit 1; fi
+        ensure_container
+        if [[ -f "$TARGET" && "$TARGET" == *.deb ]]; then
+            FILE_PATH=$(realpath "$TARGET")
+            echo "📥 Installing local file: $TARGET"
+            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update > /dev/null 2>&1 && sudo apt-get install -y '$FILE_PATH'"
+            APP_NAME=$(distrobox enter "$CONTAINER_NAME" -- bash -c "dpkg-deb -f '$FILE_PATH' Package")
+        else
+            echo "📥 Installing web package: $TARGET"
+            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update > /dev/null 2>&1 && sudo apt-get install -y $TARGET"
+            APP_NAME="$TARGET"
+        fi
+        echo "🔗 Bridging $APP_NAME to Desktop..."
+        distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $APP_NAME"
+        echo "✅ Installed $APP_NAME!"
+        ;;
+
+    remove)
+        if [ -z "$TARGET" ]; then echo "Usage: cert remove <package>"; exit 1; fi
+        echo "🗑️ Removing $TARGET..."
+        distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get remove -y $TARGET"
+        # Optional: Add unexport logic here later
+        echo "✅ Removed $TARGET."
+        ;;
+        
+    *)
+        echo "Certux Engine Commands:"
+        echo "  cert install <pkg or .deb>  - Install an app"
+        echo "  cert remove <pkg>           - Remove an app"
+        echo "  cert upgrade                - Update entire OS"
+        ;;
+esac
+
+read -p "Press Enter to exit..."

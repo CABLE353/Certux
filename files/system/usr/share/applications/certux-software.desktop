@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Certux Software
+Comment=Manage System Packages and Updates
+Exec=/usr/bin/certux-software
+Icon=system-software-install
+Terminal=false
+Type=Application
+Categories=System;Settings;

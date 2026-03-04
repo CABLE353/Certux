@@ -6,14 +6,14 @@ import threading
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, GLib, Pango
+from gi.repository import Gtk, Adw, GLib
 
 class CertuxSoftwareWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Certux Software Center")
-        self.set_default_size(900, 700)
+        self.set_default_size(900, 750)
 
-        # Tab Setup (Fixed the double-tab bug)
+        # Tab Setup
         self.view_stack = Adw.ViewStack()
         
         page_software = self.create_software_page()
@@ -29,38 +29,53 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         header = Adw.HeaderBar()
         header.set_title_widget(view_switcher)
 
-        # Main vertical layout
+        # Main Layout
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         vbox.append(header)
         vbox.append(self.view_stack)
 
-        # Embedded Console Output (Replaces external terminals)
+        # --- THE EMBEDDED CONSOLE ---
+        console_header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        console_header_box.set_margin_start(15)
+        console_header_box.set_margin_end(15)
+        console_header_box.set_margin_top(15)
+        console_header_box.set_margin_bottom(5)
+        
+        console_label = Gtk.Label(label="<b>System Output Engine</b>", use_markup=True)
+        console_label.set_hexpand(True)
+        console_label.set_halign(Gtk.Align.START)
+        
+        clear_btn = Gtk.Button(label="Clear Console")
+        clear_btn.connect("clicked", self.on_clear_console)
+        
+        console_header_box.append(console_label)
+        console_header_box.append(clear_btn)
+
         self.console_buffer = Gtk.TextBuffer()
-        console_view = Gtk.TextView(buffer=self.console_buffer)
-        console_view.set_editable(False)
-        console_view.set_wrap_mode(Gtk.WrapMode.WORD)
-        console_view.set_monospace(True)
-        # Add basic styling to make it look like a terminal
-        console_view.add_css_class("card")
+        self.console_view = Gtk.TextView(buffer=self.console_buffer)
+        self.console_view.set_editable(False)
+        self.console_view.set_wrap_mode(Gtk.WrapMode.WORD)
+        self.console_view.set_monospace(True)
+        self.console_view.add_css_class("card")
 
         scroll = Gtk.ScrolledWindow()
-        scroll.set_child(console_view)
-        scroll.set_size_request(-1, 200) # Takes up bottom 200px
-        scroll.set_margin_start(10)
-        scroll.set_margin_end(10)
-        scroll.set_margin_bottom(10)
+        scroll.set_child(self.console_view)
+        scroll.set_size_request(-1, 280) # Dedicated space at the bottom
+        scroll.set_margin_start(15)
+        scroll.set_margin_end(15)
+        scroll.set_margin_bottom(15)
 
         vbox.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        vbox.append(console_header_box)
         vbox.append(scroll)
         
         self.set_content(vbox)
 
-        # Handle Double-Click File Input automatically
+        # Handle Double-Click File Input
         if len(sys.argv) > 1:
             filepath = sys.argv[1]
             self.run_cert_command(f"/usr/bin/cert install '{filepath}'")
 
-    # --- UI PAGE CREATION ---
     def create_software_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
         box.set_margin_top(30)
@@ -72,7 +87,7 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         self.search_entry = Gtk.Entry(placeholder_text="Search for apps (VLC, Blender...)")
         self.search_entry.set_width_chars(30)
         search_btn = Gtk.Button(label="Search Repos")
-        search_btn.connect("clicked", lambda b: self.run_cert_command(f"/usr/bin/cert search {self.search_entry.get_text()}"))
+        search_btn.connect("clicked", lambda b: self.run_cert_command(f"/usr/bin/cert search '{self.search_entry.get_text()}'"))
         search_box.append(self.search_entry)
         search_box.append(search_btn)
         box.append(search_box)
@@ -82,7 +97,7 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         self.pkg_entry.set_width_chars(30)
         install_btn = Gtk.Button(label="Install")
         install_btn.add_css_class("suggested-action")
-        install_btn.connect("clicked", lambda b: self.run_cert_command(f"/usr/bin/cert install {self.pkg_entry.get_text()}"))
+        install_btn.connect("clicked", lambda b: self.run_cert_command(f"/usr/bin/cert install '{self.pkg_entry.get_text()}'"))
         install_box.append(self.pkg_entry)
         install_box.append(install_btn)
         box.append(install_box)
@@ -100,16 +115,17 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
 
         box.append(Gtk.Label(label="<span size='x-large' weight='bold'>System Organization</span>", use_markup=True))
         
-        list_btn = Gtk.Button(label="Refresh Installed App List")
+        list_btn = Gtk.Button(label="List All Installed Software")
         list_btn.add_css_class("suggested-action")
         list_btn.connect("clicked", lambda b: self.run_cert_command("/usr/bin/cert list"))
         box.append(list_btn)
 
         remove_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        self.rem_entry = Gtk.Entry(placeholder_text="Package to remove")
-        rem_btn = Gtk.Button(label="Remove")
+        self.rem_entry = Gtk.Entry(placeholder_text="Package name to remove")
+        self.rem_entry.set_width_chars(30)
+        rem_btn = Gtk.Button(label="Remove App")
         rem_btn.add_css_class("destructive-action")
-        rem_btn.connect("clicked", lambda b: self.run_cert_command(f"/usr/bin/cert remove {self.rem_entry.get_text()}"))
+        rem_btn.connect("clicked", lambda b: self.run_cert_command(f"/usr/bin/cert remove '{self.rem_entry.get_text()}'"))
         remove_box.append(self.rem_entry)
         remove_box.append(rem_btn)
         box.append(remove_box)
@@ -138,15 +154,17 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
 
         return box
 
+    def on_clear_console(self, button):
+        self.console_buffer.set_text("")
+
     # --- THE THREADED BACKEND EXECUTION ---
     def run_cert_command(self, command):
-        self.console_buffer.set_text(f"🚀 Executing: {command}\n")
+        self.console_buffer.insert(self.console_buffer.get_end_iter(), f"\n🚀 Executing: {command}\n")
+        self.scroll_to_bottom()
         
-        # We run the shell command in a background thread so the GUI does not freeze
         def worker():
             process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             for line in process.stdout:
-                # Safely update the GTK UI from the background thread
                 GLib.idle_add(self.append_console, line)
             process.wait()
             GLib.idle_add(self.append_console, "\n✅ Task Finished.\n")
@@ -156,7 +174,11 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
     def append_console(self, text):
         it = self.console_buffer.get_end_iter()
         self.console_buffer.insert(it, text)
-        # Optional: could auto-scroll to bottom here
+        self.scroll_to_bottom()
+        
+    def scroll_to_bottom(self):
+        mark = self.console_buffer.create_mark("end", self.console_buffer.get_end_iter(), False)
+        self.console_view.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
 
 class CertuxApp(Adw.Application):
     def __init__(self):

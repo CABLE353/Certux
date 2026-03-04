@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# Certux System Mechanic v1.1
-# Purpose: Dynamically routes both web packages and local .deb files into the sandbox.
+# Certux System Mechanic v1.2
+# Purpose: Dynamically routes packages, handles local .debs, and supports 32-bit apps.
 
 PACKAGE_INPUT=$1
 CONTAINER_NAME="certux-legacy-layer"
@@ -9,15 +9,17 @@ BASE_IMAGE="debian:latest"
 
 if [ -z "$PACKAGE_INPUT" ]; then
     echo "Usage: cert-install <package_name> OR cert-install </path/to/file.deb>"
+    read -p "Press Enter to exit..."
     exit 1
 fi
 
 echo "⚙️  Initializing Certux Mechanic..."
 
-# Check if the container exists. If not, create it.
+# Check if the container exists. If not, create it and enable 32-bit support.
 if ! distrobox list | grep -q "$CONTAINER_NAME"; then
     echo "📦 Building isolated legacy environment..."
     distrobox create --name "$CONTAINER_NAME" --image "$BASE_IMAGE" --yes > /dev/null 2>&1
+    echo "🔧 Enabling 32-bit architecture support (for apps like Steam)..."
     distrobox enter "$CONTAINER_NAME" -- bash -c "sudo dpkg --add-architecture i386 && sudo apt-get update > /dev/null 2>&1"
 fi
 
@@ -25,7 +27,7 @@ fi
 # Phase 1: The Smart Detection Engine
 # ==========================================
 if [[ -f "$PACKAGE_INPUT" && "$PACKAGE_INPUT" == *.deb ]]; then
-    # It is a local file. We must get the absolute path so the container can find it.
+    # It is a local file. We must get the absolute path.
     FILE_PATH=$(realpath "$PACKAGE_INPUT")
     echo "📥 Local .deb detected. Installing inside sandbox..."
     
@@ -47,4 +49,6 @@ fi
 echo "🔗 Bridging '$APP_NAME' to the Certux interface..."
 distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $APP_NAME"
 
-echo "✅ Success!"
+echo "✅ Success! '$APP_NAME' is now securely installed."
+# Pause so the user can read the success message when double-clicking
+read -p "Press Enter to close this window..."

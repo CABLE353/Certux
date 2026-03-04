@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Certux Universal Engine v3.0
+# Certux Universal Engine v4.0
 
 COMMAND=$1
 TARGET=$2
+EXTRA=$3
 CONTAINER_NAME="certux-legacy-layer"
 BASE_IMAGE="debian:latest"
 
@@ -17,14 +18,15 @@ ensure_container() {
 case "$COMMAND" in
     search)
         if [ -z "$TARGET" ]; then echo "Usage: cert search <query>"; exit 1; fi
-        echo "🔍 Searching Certux Unified Ecosystem for: $TARGET"
-        echo "========================================="
-        echo "📦 FLATPAK (Modern Sandboxed Apps):"
-        flatpak search "$TARGET" --columns=application,name,description | head -n 5
-        echo "========================================="
-        echo "📦 DEBIAN (Legacy Subsystem):"
+        echo -e "\n🔍 Searching Certux Ecosystem for: \033[1;36m$TARGET\033[0m"
+        echo "=========================================================="
+        echo -e "\033[1;34m📦 FLATPAK (Modern Sandboxed Apps):\033[0m"
+        flatpak search "$TARGET" --columns=application,name,description | head -n 6
+        echo "=========================================================="
+        echo -e "\033[1;32m📦 DEBIAN SUBSYSTEM (Legacy Apps):\033[0m"
         ensure_container
-        distrobox enter "$CONTAINER_NAME" -- bash -c "apt-cache search $TARGET | head -n 5"
+        distrobox enter "$CONTAINER_NAME" -- bash -c "apt-cache search $TARGET | head -n 6"
+        echo "=========================================================="
         ;;
 
     upgrade)
@@ -36,12 +38,28 @@ case "$COMMAND" in
         fi
         echo "✅ Universal Upgrade complete!"
         ;;
+
+    repo)
+        ensure_container
+        if [ "$TARGET" == "list" ]; then
+            echo -e "\n\033[1;34m--- FLATPAK REPOSITORIES ---\033[0m"
+            flatpak remotes
+            echo -e "\n\033[1;32m--- DEBIAN SUBSYSTEM REPOSITORIES ---\033[0m"
+            distrobox enter "$CONTAINER_NAME" -- bash -c "cat /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null | grep -v '^#'"
+        elif [ "$TARGET" == "add" ]; then
+            if [ -z "$EXTRA" ]; then echo "Usage: cert repo add <apt_repo_string>"; exit 1; fi
+            echo "➕ Adding repository to Debian Subsystem: $EXTRA"
+            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-add-repository '$EXTRA' -y && sudo apt-get update"
+        else
+            echo "Usage: cert repo list OR cert repo add <url>"
+        fi
+        ;;
         
     install)
         if [ -z "$TARGET" ]; then echo "Usage: cert install <package/file>"; exit 1; fi
         
         # --- APPIMAGE ROUTING ---
-        if [[ "$TARGET" == *.AppImage || "$TARGET" == *.appimage ]]; then
+        if [[ "$TARGET" == *.AppImage || "$TARGET" == *.appimage || "$TARGET" == *.appImage ]]; then
             APP_DIR="$HOME/System/Apps"
             mkdir -p "$APP_DIR"
             BASENAME=$(basename "$TARGET")
@@ -50,19 +68,21 @@ case "$COMMAND" in
             cp "$TARGET" "$APP_DIR/$BASENAME"
             chmod +x "$APP_DIR/$BASENAME"
             
-            # Generate a shortcut for the AppImage
             DESKTOP_FILE="$HOME/.local/share/applications/certux-${APP_NAME}.desktop"
             echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=$APP_DIR/$BASENAME\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$DESKTOP_FILE"
             echo "✅ AppImage installed and bridged to Desktop!"
             exit 0
         fi
 
-        # --- DEBIAN/WEB ROUTING ---
+        # --- DEBIAN ROUTING & AUTO-HEALER ---
         ensure_container
         if [[ -f "$TARGET" && "$TARGET" == *.deb ]]; then
             FILE_PATH=$(realpath "$TARGET")
             echo "📥 Installing local .deb: $TARGET"
-            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update > /dev/null 2>&1 && sudo apt-get install -y '$FILE_PATH'"
+            if ! distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update > /dev/null 2>&1 && sudo apt-get install -y '$FILE_PATH'"; then
+                echo "⚠️ Dependency mismatch detected. Triggering Auto-Healer..."
+                distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get install -f -y"
+            fi
             APP_NAME=$(distrobox enter "$CONTAINER_NAME" -- bash -c "dpkg-deb -f '$FILE_PATH' Package")
         else
             echo "📥 Installing web package: $TARGET"
@@ -71,23 +91,24 @@ case "$COMMAND" in
         fi
         
         echo "🔗 Bridging $APP_NAME to Desktop..."
-        # Aggressive export: Try package name, if fail, try stripping '-launcher' or '-latest' (fixes Steam)
         distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $APP_NAME || distrobox-export --app ${APP_NAME%-*} || true"
         echo "✅ Installed $APP_NAME!"
         ;;
 
     remove)
+        ensure_container
         if [ -z "$TARGET" ]; then echo "Usage: cert remove <package>"; exit 1; fi
         echo "🗑️ Removing $TARGET..."
         distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get remove -y $TARGET"
         ;;
         
     *)
-        echo "Certux Unified Commands:"
+        echo -e "\033[1mCertux Unified Commands:\033[0m"
         echo "  cert search <query>         - Search all repositories"
         echo "  cert install <pkg/file>     - Install Web, .deb, or .AppImage"
         echo "  cert remove <pkg>           - Remove an app"
         echo "  cert upgrade                - Update entire OS"
+        echo "  cert repo list              - List all active repositories"
         ;;
 esac
 read -p "Press Enter to exit..."

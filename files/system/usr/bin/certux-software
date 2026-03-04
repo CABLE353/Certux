@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import gi
 import subprocess
+import shutil
+import sys
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
@@ -9,63 +11,99 @@ from gi.repository import Gtk, Adw
 class CertuxSoftwareWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Certux Software Center")
-        self.set_default_size(800, 600)
+        self.set_default_size(850, 650)
+
+        # Tab Setup
+        self.view_stack = Adw.ViewStack()
+        
+        page_software = self.create_software_page()
+        page_repos = self.create_repo_page()
+        
+        self.view_stack.add_titled(page_software, "software", "Software")
+        self.view_stack.add_titled(page_repos, "repos", "Repositories")
+
+        switcher_bar = Adw.ViewSwitcherBar()
+        switcher_bar.set_stack(self.view_stack)
+        switcher_bar.set_reveal(True)
 
         header = Adw.HeaderBar()
+        header.set_title_widget(Adw.ViewSwitcherTitle(stack=self.view_stack))
+
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.append(header)
+        box.append(self.view_stack)
+        box.append(switcher_bar)
         
-        label = Gtk.Label(label="<span size='xx-large' weight='bold'>Certux Unified Ecosystem</span>", use_markup=True)
-        label.set_margin_top(40)
-        label.set_margin_bottom(20)
-        
-        btn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
-        btn_box.set_halign(Gtk.Align.CENTER)
+        self.set_content(box)
 
-        # Search Bar
+        # Handle Double-Click File Input
+        if len(sys.argv) > 1:
+            filepath = sys.argv[1]
+            self.run_cert_command(f"cert install '{filepath}'")
+
+    def create_software_page(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
+        box.set_margin_top(40)
+        box.set_halign(Gtk.Align.CENTER)
+
+        title = Gtk.Label(label="<span size='xx-large' weight='bold'>Certux Unified Ecosystem</span>", use_markup=True)
+        box.append(title)
+
+        # Search
         search_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         self.search_entry = Gtk.Entry(placeholder_text="Search for an app...")
         search_btn = Gtk.Button(label="Search Repos")
-        search_btn.connect("clicked", self.on_search_clicked)
+        search_btn.connect("clicked", lambda b: self.run_cert_command(f"cert search {self.search_entry.get_text()}"))
         search_box.append(self.search_entry)
         search_box.append(search_btn)
+        box.append(search_box)
 
-        # Install Box
+        # Install
         install_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        self.pkg_entry = Gtk.Entry(placeholder_text="Type exact package name to install")
+        self.pkg_entry = Gtk.Entry(placeholder_text="Exact package name to install...")
         install_btn = Gtk.Button(label="Install")
-        install_btn.connect("clicked", self.on_install_clicked)
+        install_btn.connect("clicked", lambda b: self.run_cert_command(f"cert install {self.pkg_entry.get_text()}"))
         install_box.append(self.pkg_entry)
         install_box.append(install_btn)
+        box.append(install_box)
 
-        upgrade_btn = Gtk.Button(label="Upgrade Entire System")
-        upgrade_btn.add_css_class("suggested-action")
-        upgrade_btn.connect("clicked", self.on_upgrade_clicked)
+        # Upgrade
+        up_btn = Gtk.Button(label="Upgrade Entire System")
+        up_btn.add_css_class("suggested-action")
+        up_btn.connect("clicked", lambda b: self.run_cert_command("cert upgrade"))
+        box.append(up_btn)
 
-        btn_box.append(search_box)
-        btn_box.append(install_box)
-        btn_box.append(upgrade_btn)
-        
-        box.append(label)
-        box.append(btn_box)
-        self.set_content(box)
+        return box
+
+    def create_repo_page(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
+        box.set_margin_top(40)
+        box.set_halign(Gtk.Align.CENTER)
+
+        title = Gtk.Label(label="<span size='x-large' weight='bold'>Repository Management</span>", use_markup=True)
+        box.append(title)
+
+        list_btn = Gtk.Button(label="List Active Repositories")
+        list_btn.connect("clicked", lambda b: self.run_cert_command("cert repo list"))
+        box.append(list_btn)
+
+        add_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.repo_entry = Gtk.Entry(placeholder_text="deb http://... / ppa:...")
+        add_btn = Gtk.Button(label="Add Debian Repo")
+        add_btn.connect("clicked", lambda b: self.run_cert_command(f"cert repo add '{self.repo_entry.get_text()}'"))
+        add_box.append(self.repo_entry)
+        add_box.append(add_btn)
+        box.append(add_box)
+
+        return box
 
     def run_cert_command(self, command):
-        subprocess.Popen(["gnome-terminal", "--", "bash", "-c", f"{command}"])
-
-    def on_search_clicked(self, button):
-        query = self.search_entry.get_text()
-        if query:
-            self.run_cert_command(f"cert search {query}")
-
-    def on_install_clicked(self, button):
-        pkg = self.pkg_entry.get_text()
-        if pkg:
-            self.run_cert_command(f"cert install {pkg}")
-            self.pkg_entry.set_text("")
-
-    def on_upgrade_clicked(self, button):
-        self.run_cert_command("cert upgrade")
+        # Dynamic terminal detection for modern Fedora environments
+        term = "ptyxis" if shutil.which("ptyxis") else "kgx"
+        if term == "ptyxis":
+            subprocess.Popen(["ptyxis", "--", "bash", "-c", command])
+        else:
+            subprocess.Popen(["kgx", "-e", "bash", "-c", command])
 
 class CertuxApp(Adw.Application):
     def __init__(self):

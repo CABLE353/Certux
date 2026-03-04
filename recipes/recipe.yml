@@ -18,23 +18,22 @@ modules:
         destination: /
   - type: script
     snippets:
-      - "chmod +x /usr/bin/cert-install"
+      - "chmod +x /usr/bin/cert"
+      - "chmod +x /usr/bin/certux-software"
       - "chmod +x /usr/bin/certux-law-setup"
-  - type: dnf
-    repos:
-      copr:
-        - atim/starship
+ - type: dnf
     install:
       packages:
         - micro
         - starship
         - distrobox
+        - python3-gobject # Needed for our new GUI
     remove:
       packages:
-        # example: removing firefox (in favor of the flatpak)
-        # "firefox" is the main package, "firefox-langpacks" is a dependency
         - firefox
-        - firefox-langpacks # also remove firefox dependency (not required for all packages, this is a special case)
+        - firefox-langpacks
+        - gnome-software
+        - gnome-software-plugin-flatpak
 
   - type: default-flatpaks
     configurations:

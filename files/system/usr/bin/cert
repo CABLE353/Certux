@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# Certux Universal Engine v1.0
+# Certux Universal Engine v3.0
 
 COMMAND=$1
 TARGET=$2
 CONTAINER_NAME="certux-legacy-layer"
 BASE_IMAGE="debian:latest"
 
-# Helper: Ensure container exists
 ensure_container() {
     if ! distrobox list | grep -q "$CONTAINER_NAME"; then
         echo "📦 Initializing Certux Subsystem..."
@@ -16,25 +15,53 @@ ensure_container() {
 }
 
 case "$COMMAND" in
+    search)
+        if [ -z "$TARGET" ]; then echo "Usage: cert search <query>"; exit 1; fi
+        echo "🔍 Searching Certux Unified Ecosystem for: $TARGET"
+        echo "========================================="
+        echo "📦 FLATPAK (Modern Sandboxed Apps):"
+        flatpak search "$TARGET" --columns=application,name,description | head -n 5
+        echo "========================================="
+        echo "📦 DEBIAN (Legacy Subsystem):"
+        ensure_container
+        distrobox enter "$CONTAINER_NAME" -- bash -c "apt-cache search $TARGET | head -n 5"
+        ;;
+
     upgrade)
         echo "🔄 Upgrading Certux Ecosystem..."
-        echo "▶ Updating Host (OSTree)..."
         sudo rpm-ostree upgrade
-        echo "▶ Updating Apps (Flatpak)..."
         flatpak update -y
         if distrobox list | grep -q "$CONTAINER_NAME"; then
-            echo "▶ Updating Subsystem..."
             distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update > /dev/null 2>&1 && sudo apt-get upgrade -y"
         fi
-        echo "✅ Upgrade complete! Reboot if Host was updated."
+        echo "✅ Universal Upgrade complete!"
         ;;
         
     install)
         if [ -z "$TARGET" ]; then echo "Usage: cert install <package/file>"; exit 1; fi
+        
+        # --- APPIMAGE ROUTING ---
+        if [[ "$TARGET" == *.AppImage || "$TARGET" == *.appimage ]]; then
+            APP_DIR="$HOME/System/Apps"
+            mkdir -p "$APP_DIR"
+            BASENAME=$(basename "$TARGET")
+            APP_NAME="${BASENAME%.*}"
+            echo "📥 AppImage detected. Securing in $APP_DIR..."
+            cp "$TARGET" "$APP_DIR/$BASENAME"
+            chmod +x "$APP_DIR/$BASENAME"
+            
+            # Generate a shortcut for the AppImage
+            DESKTOP_FILE="$HOME/.local/share/applications/certux-${APP_NAME}.desktop"
+            echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=$APP_DIR/$BASENAME\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$DESKTOP_FILE"
+            echo "✅ AppImage installed and bridged to Desktop!"
+            exit 0
+        fi
+
+        # --- DEBIAN/WEB ROUTING ---
         ensure_container
         if [[ -f "$TARGET" && "$TARGET" == *.deb ]]; then
             FILE_PATH=$(realpath "$TARGET")
-            echo "📥 Installing local file: $TARGET"
+            echo "📥 Installing local .deb: $TARGET"
             distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update > /dev/null 2>&1 && sudo apt-get install -y '$FILE_PATH'"
             APP_NAME=$(distrobox enter "$CONTAINER_NAME" -- bash -c "dpkg-deb -f '$FILE_PATH' Package")
         else
@@ -42,8 +69,10 @@ case "$COMMAND" in
             distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update > /dev/null 2>&1 && sudo apt-get install -y $TARGET"
             APP_NAME="$TARGET"
         fi
+        
         echo "🔗 Bridging $APP_NAME to Desktop..."
-        distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $APP_NAME"
+        # Aggressive export: Try package name, if fail, try stripping '-launcher' or '-latest' (fixes Steam)
+        distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $APP_NAME || distrobox-export --app ${APP_NAME%-*} || true"
         echo "✅ Installed $APP_NAME!"
         ;;
 
@@ -51,16 +80,14 @@ case "$COMMAND" in
         if [ -z "$TARGET" ]; then echo "Usage: cert remove <package>"; exit 1; fi
         echo "🗑️ Removing $TARGET..."
         distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get remove -y $TARGET"
-        # Optional: Add unexport logic here later
-        echo "✅ Removed $TARGET."
         ;;
         
     *)
-        echo "Certux Engine Commands:"
-        echo "  cert install <pkg or .deb>  - Install an app"
+        echo "Certux Unified Commands:"
+        echo "  cert search <query>         - Search all repositories"
+        echo "  cert install <pkg/file>     - Install Web, .deb, or .AppImage"
         echo "  cert remove <pkg>           - Remove an app"
         echo "  cert upgrade                - Update entire OS"
         ;;
 esac
-
 read -p "Press Enter to exit..."

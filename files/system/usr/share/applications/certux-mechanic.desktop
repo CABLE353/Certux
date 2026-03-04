@@ -1,9 +1,9 @@
 [Desktop Entry]
-Name=Certux Mechanic installer
-Comment=Securely install legacy Debian packages
-Exec=gnome-terminal -- /usr/bin/cert install %f
+Name=Certux Software Installer
+Comment=Securely install legacy Debian packages and AppImages
+Exec=/usr/bin/certux-software %f
 Icon=system-software-install
 Terminal=false
 Type=Application
 Categories=System;
-MimeType=application/vnd.debian.binary-package;
+MimeType=application/vnd.debian.binary-package;application/x-appimage;

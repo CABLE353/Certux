@@ -10,6 +10,11 @@ modules:
       - source: system
         destination: /
 
+  - type: systemd
+    user:
+      enabled:
+        - certux-update-cache.service
+
   - type: script
     snippets:
       - "chmod +x /usr/bin/cert"

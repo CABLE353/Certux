@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Certux Universal Engine v5.0
+# Certux Universal Engine v6.0 - Master Edition
 
 COMMAND=$1
 TARGET=$2
@@ -18,7 +18,7 @@ ensure_container() {
 case "$COMMAND" in
     search)
         if [ -z "$TARGET" ]; then echo "Usage: cert search <query>"; exit 1; fi
-        echo "🔍 Searching Certux Ecosystem for: $TARGET"
+        echo -e "\n🔍 Searching Certux Ecosystem for: $TARGET"
         echo "=========================================================="
         echo "📦 FLATPAK (Modern Sandboxed Apps):"
         flatpak search "$TARGET" --columns=application,name,description | head -n 6
@@ -44,7 +44,6 @@ case "$COMMAND" in
         echo "📦 DEBIAN SUBSYSTEM (certux-legacy-layer)"
         echo "=========================================================="
         ensure_container
-        # Lists manually installed apt packages (filtering out dependencies for clarity)
         distrobox enter "$CONTAINER_NAME" -- bash -c "apt-mark showmanual"
         echo "=========================================================="
         ;;
@@ -54,7 +53,7 @@ case "$COMMAND" in
         sudo rpm-ostree upgrade
         flatpak update -y
         if distrobox list | grep -q "$CONTAINER_NAME"; then
-            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update > /dev/null 2>&1 && sudo apt-get upgrade -y"
+            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y"
         fi
         echo "✅ Universal Upgrade complete!"
         ;;
@@ -62,19 +61,23 @@ case "$COMMAND" in
     repo)
         ensure_container
         if [ "$TARGET" == "list" ]; then
-            echo "--- FLATPAK REPOSITORIES ---"
+            echo -e "\n--- FLATPAK REPOSITORIES ---"
             flatpak remotes
             echo -e "\n--- DEBIAN SUBSYSTEM REPOSITORIES ---"
             distrobox enter "$CONTAINER_NAME" -- bash -c "cat /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null | grep -v '^#'"
         elif [ "$TARGET" == "add" ]; then
+            if [ -z "$EXTRA" ]; then echo "Usage: cert repo add <url>"; exit 1; fi
             echo "➕ Adding repository: $EXTRA"
             distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-add-repository '$EXTRA' -y && sudo apt-get update"
+        else
+            echo "Usage: cert repo list OR cert repo add <url>"
         fi
         ;;
         
     install)
         if [ -z "$TARGET" ]; then echo "Usage: cert install <package/file>"; exit 1; fi
         
+        # --- APPIMAGE ROUTING ---
         if [[ "$TARGET" == *.AppImage || "$TARGET" == *.appimage ]]; then
             APP_DIR="$HOME/System/Apps"
             mkdir -p "$APP_DIR"
@@ -85,16 +88,17 @@ case "$COMMAND" in
             chmod +x "$APP_DIR/$BASENAME"
             DESKTOP_FILE="$HOME/.local/share/applications/certux-${APP_NAME}.desktop"
             echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=$APP_DIR/$BASENAME\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$DESKTOP_FILE"
-            echo "✅ AppImage installed!"
+            echo "✅ AppImage installed and bridged to Desktop!"
             exit 0
         fi
 
+        # --- DEBIAN ROUTING & AUTO-HEALER ---
         ensure_container
         if [[ -f "$TARGET" && "$TARGET" == *.deb ]]; then
             FILE_PATH=$(realpath "$TARGET")
             echo "📥 Installing local .deb: $TARGET"
             if ! distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y '$FILE_PATH'"; then
-                echo "⚠️ Resolving dependencies..."
+                echo "⚠️ Dependency mismatch detected. Triggering Auto-Healer..."
                 distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get install -f -y"
             fi
             APP_NAME=$(distrobox enter "$CONTAINER_NAME" -- bash -c "dpkg-deb -f '$FILE_PATH' Package")
@@ -104,20 +108,54 @@ case "$COMMAND" in
             APP_NAME="$TARGET"
         fi
         
-        echo "🔗 Bridging $APP_NAME to Desktop..."
-        distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $APP_NAME || distrobox-export --app ${APP_NAME%-*} || true"
-        echo "✅ Installed $APP_NAME!"
+        # --- HONEST EXPORT LOGIC ---
+        echo "🔗 Attempting to bridge $APP_NAME to your desktop..."
+        
+        if distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $APP_NAME" > /dev/null 2>&1; then
+            echo "✅ Successfully installed and exported $APP_NAME!"
+        else
+            # Fallback 1: Search for an exact .desktop file match
+            FOUND_DESKTOP=$(distrobox enter "$CONTAINER_NAME" -- bash -c "ls /usr/share/applications | grep -i '$APP_NAME' | head -n 1")
+            if [ -n "$FOUND_DESKTOP" ]; then
+                CLEAN_NAME="${FOUND_DESKTOP%.desktop}"
+                if distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $CLEAN_NAME" > /dev/null 2>&1; then
+                    echo "✅ Found and exported $CLEAN_NAME!"
+                else
+                    echo "❌ Error: Could not export $APP_NAME. App installed, but shortcut bridging failed."
+                fi
+            else
+                # Fallback 2: Strip trailing characters (e.g., google-chrome-stable -> google-chrome)
+                SHORT_NAME="${APP_NAME%%-*}"
+                if [ "$SHORT_NAME" != "$APP_NAME" ] && distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $SHORT_NAME" > /dev/null 2>&1; then
+                    echo "✅ Successfully installed and exported $SHORT_NAME!"
+                else
+                    echo "❌ Error: $APP_NAME installed, but no desktop shortcut was found to export."
+                fi
+            fi
+        fi
         ;;
 
     remove)
         ensure_container
+        if [ -z "$TARGET" ]; then echo "Usage: cert remove <package>"; exit 1; fi
         echo "🗑️ Removing $TARGET..."
-        distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get remove -y $TARGET"
+        distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get remove -y $TARGET"
+        echo "✅ Removed $TARGET."
+        ;;
+        
+    *)
+        echo -e "Certux Unified Commands:"
+        echo "  cert search <query>         - Search all repositories"
+        echo "  cert install <pkg/file>     - Install Web, .deb, or .AppImage"
+        echo "  cert remove <pkg>           - Remove an app"
+        echo "  cert upgrade                - Update entire OS"
+        echo "  cert list                   - List installed apps/packages"
+        echo "  cert repo list              - List all active repositories"
+        echo "  cert repo add <url>         - Add a Debian PPA or repo URL"
         ;;
 esac
 
-# ONLY prompt for enter if we are running in an actual interactive terminal window.
-# If running silently inside the Python GUI, exit cleanly.
+# Only pause if run from a standard interactive terminal
 if [ -t 0 ]; then
     read -p "Press Enter to exit..."
 fi

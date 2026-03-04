@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+import gi
+import subprocess
+import os
+
+gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
+from gi.repository import Gtk, Adw, Gio
+
+class CertuxSoftwareWindow(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Certux Software Center")
+        self.set_default_size(800, 600)
+
+        # Header Bar
+        header = Adw.HeaderBar()
+        
+        # Main Layout
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box.append(header)
+        
+        # Welcome Text
+        label = Gtk.Label(label="<span size='xx-large' weight='bold'>Certux System Manager</span>", use_markup=True)
+        label.set_margin_top(40)
+        label.set_margin_bottom(20)
+        
+        # Buttons Box
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        btn_box.set_halign(Gtk.Align.CENTER)
+
+        # Install Package Button
+        install_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.pkg_entry = Gtk.Entry(placeholder_text="Enter package name (e.g. vlc)")
+        install_btn = Gtk.Button(label="Install Package")
+        install_btn.connect("clicked", self.on_install_clicked)
+        install_box.append(self.pkg_entry)
+        install_box.append(install_btn)
+
+        # Upgrade System Button
+        upgrade_btn = Gtk.Button(label="Upgrade Entire System")
+        upgrade_btn.add_css_class("suggested-action") # Makes it blue/accent color
+        upgrade_btn.connect("clicked", self.on_upgrade_clicked)
+
+        # Build UI
+        btn_box.append(install_box)
+        btn_box.append(upgrade_btn)
+        
+        box.append(label)
+        box.append(btn_box)
+        
+        self.set_content(box)
+
+    def run_cert_command(self, command):
+        # Pops open a terminal to show the user the progress of the 'cert' script
+        subprocess.Popen(["gnome-terminal", "--", "bash", "-c", f"{command}"])
+
+    def on_install_clicked(self, button):
+        pkg = self.pkg_entry.get_text()
+        if pkg:
+            self.run_cert_command(f"cert install {pkg}")
+            self.pkg_entry.set_text("")
+
+    def on_upgrade_clicked(self, button):
+        self.run_cert_command("cert upgrade")
+
+class CertuxApp(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="com.certux.software")
+
+    def do_activate(self):
+        win = CertuxSoftwareWindow(self)
+        win.present()
+
+app = CertuxApp()
+app.run(None)

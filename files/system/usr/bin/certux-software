@@ -1,109 +1,162 @@
 #!/usr/bin/env python3
 import gi
 import subprocess
-import shutil
 import sys
+import threading
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw
+from gi.repository import Gtk, Adw, GLib, Pango
 
 class CertuxSoftwareWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Certux Software Center")
-        self.set_default_size(850, 650)
+        self.set_default_size(900, 700)
 
-        # Tab Setup
+        # Tab Setup (Fixed the double-tab bug)
         self.view_stack = Adw.ViewStack()
         
         page_software = self.create_software_page()
+        page_installed = self.create_installed_page()
         page_repos = self.create_repo_page()
         
-        self.view_stack.add_titled(page_software, "software", "Software")
+        self.view_stack.add_titled(page_software, "software", "Store & Install")
+        self.view_stack.add_titled(page_installed, "installed", "Installed Apps")
         self.view_stack.add_titled(page_repos, "repos", "Repositories")
 
-        switcher_bar = Adw.ViewSwitcherBar()
-        switcher_bar.set_stack(self.view_stack)
-        switcher_bar.set_reveal(True)
-
-        header = Adw.HeaderBar()
-        header.set_title_widget(Adw.ViewSwitcherTitle(stack=self.view_stack))
-
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        box.append(header)
-        box.append(self.view_stack)
-        box.append(switcher_bar)
+        view_switcher = Adw.ViewSwitcherTitle(stack=self.view_stack)
         
-        self.set_content(box)
+        header = Adw.HeaderBar()
+        header.set_title_widget(view_switcher)
 
-        # Handle Double-Click File Input
+        # Main vertical layout
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        vbox.append(header)
+        vbox.append(self.view_stack)
+
+        # Embedded Console Output (Replaces external terminals)
+        self.console_buffer = Gtk.TextBuffer()
+        console_view = Gtk.TextView(buffer=self.console_buffer)
+        console_view.set_editable(False)
+        console_view.set_wrap_mode(Gtk.WrapMode.WORD)
+        console_view.set_monospace(True)
+        # Add basic styling to make it look like a terminal
+        console_view.add_css_class("card")
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_child(console_view)
+        scroll.set_size_request(-1, 200) # Takes up bottom 200px
+        scroll.set_margin_start(10)
+        scroll.set_margin_end(10)
+        scroll.set_margin_bottom(10)
+
+        vbox.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        vbox.append(scroll)
+        
+        self.set_content(vbox)
+
+        # Handle Double-Click File Input automatically
         if len(sys.argv) > 1:
             filepath = sys.argv[1]
-            self.run_cert_command(f"cert install '{filepath}'")
+            self.run_cert_command(f"/usr/bin/cert install '{filepath}'")
 
+    # --- UI PAGE CREATION ---
     def create_software_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
-        box.set_margin_top(40)
+        box.set_margin_top(30)
         box.set_halign(Gtk.Align.CENTER)
 
-        title = Gtk.Label(label="<span size='xx-large' weight='bold'>Certux Unified Ecosystem</span>", use_markup=True)
-        box.append(title)
+        box.append(Gtk.Label(label="<span size='xx-large' weight='bold'>Certux Installer</span>", use_markup=True))
 
-        # Search
         search_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        self.search_entry = Gtk.Entry(placeholder_text="Search for an app...")
+        self.search_entry = Gtk.Entry(placeholder_text="Search for apps (VLC, Blender...)")
+        self.search_entry.set_width_chars(30)
         search_btn = Gtk.Button(label="Search Repos")
-        search_btn.connect("clicked", lambda b: self.run_cert_command(f"cert search {self.search_entry.get_text()}"))
+        search_btn.connect("clicked", lambda b: self.run_cert_command(f"/usr/bin/cert search {self.search_entry.get_text()}"))
         search_box.append(self.search_entry)
         search_box.append(search_btn)
         box.append(search_box)
 
-        # Install
         install_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        self.pkg_entry = Gtk.Entry(placeholder_text="Exact package name to install...")
+        self.pkg_entry = Gtk.Entry(placeholder_text="Exact package name to install")
+        self.pkg_entry.set_width_chars(30)
         install_btn = Gtk.Button(label="Install")
-        install_btn.connect("clicked", lambda b: self.run_cert_command(f"cert install {self.pkg_entry.get_text()}"))
+        install_btn.add_css_class("suggested-action")
+        install_btn.connect("clicked", lambda b: self.run_cert_command(f"/usr/bin/cert install {self.pkg_entry.get_text()}"))
         install_box.append(self.pkg_entry)
         install_box.append(install_btn)
         box.append(install_box)
 
-        # Upgrade
-        up_btn = Gtk.Button(label="Upgrade Entire System")
-        up_btn.add_css_class("suggested-action")
-        up_btn.connect("clicked", lambda b: self.run_cert_command("cert upgrade"))
+        up_btn = Gtk.Button(label="Run Universal System Upgrade")
+        up_btn.connect("clicked", lambda b: self.run_cert_command("/usr/bin/cert upgrade"))
         box.append(up_btn)
+
+        return box
+
+    def create_installed_page(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
+        box.set_margin_top(30)
+        box.set_halign(Gtk.Align.CENTER)
+
+        box.append(Gtk.Label(label="<span size='x-large' weight='bold'>System Organization</span>", use_markup=True))
+        
+        list_btn = Gtk.Button(label="Refresh Installed App List")
+        list_btn.add_css_class("suggested-action")
+        list_btn.connect("clicked", lambda b: self.run_cert_command("/usr/bin/cert list"))
+        box.append(list_btn)
+
+        remove_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.rem_entry = Gtk.Entry(placeholder_text="Package to remove")
+        rem_btn = Gtk.Button(label="Remove")
+        rem_btn.add_css_class("destructive-action")
+        rem_btn.connect("clicked", lambda b: self.run_cert_command(f"/usr/bin/cert remove {self.rem_entry.get_text()}"))
+        remove_box.append(self.rem_entry)
+        remove_box.append(rem_btn)
+        box.append(remove_box)
 
         return box
 
     def create_repo_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
-        box.set_margin_top(40)
+        box.set_margin_top(30)
         box.set_halign(Gtk.Align.CENTER)
 
-        title = Gtk.Label(label="<span size='x-large' weight='bold'>Repository Management</span>", use_markup=True)
-        box.append(title)
+        box.append(Gtk.Label(label="<span size='x-large' weight='bold'>Repository Management</span>", use_markup=True))
 
-        list_btn = Gtk.Button(label="List Active Repositories")
-        list_btn.connect("clicked", lambda b: self.run_cert_command("cert repo list"))
+        list_btn = Gtk.Button(label="List All Active Repositories")
+        list_btn.connect("clicked", lambda b: self.run_cert_command("/usr/bin/cert repo list"))
         box.append(list_btn)
 
         add_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        self.repo_entry = Gtk.Entry(placeholder_text="deb http://... / ppa:...")
+        self.repo_entry = Gtk.Entry(placeholder_text="ppa:name/repo OR deb http://...")
+        self.repo_entry.set_width_chars(30)
         add_btn = Gtk.Button(label="Add Debian Repo")
-        add_btn.connect("clicked", lambda b: self.run_cert_command(f"cert repo add '{self.repo_entry.get_text()}'"))
+        add_btn.connect("clicked", lambda b: self.run_cert_command(f"/usr/bin/cert repo add '{self.repo_entry.get_text()}'"))
         add_box.append(self.repo_entry)
         add_box.append(add_btn)
         box.append(add_box)
 
         return box
 
+    # --- THE THREADED BACKEND EXECUTION ---
     def run_cert_command(self, command):
-        # Dynamic terminal detection for modern Fedora environments
-        term = "ptyxis" if shutil.which("ptyxis") else "kgx"
-        if term == "ptyxis":
-            subprocess.Popen(["ptyxis", "--", "bash", "-c", command])
-        else:
-            subprocess.Popen(["kgx", "-e", "bash", "-c", command])
+        self.console_buffer.set_text(f"🚀 Executing: {command}\n")
+        
+        # We run the shell command in a background thread so the GUI does not freeze
+        def worker():
+            process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            for line in process.stdout:
+                # Safely update the GTK UI from the background thread
+                GLib.idle_add(self.append_console, line)
+            process.wait()
+            GLib.idle_add(self.append_console, "\n✅ Task Finished.\n")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def append_console(self, text):
+        it = self.console_buffer.get_end_iter()
+        self.console_buffer.insert(it, text)
+        # Optional: could auto-scroll to bottom here
 
 class CertuxApp(Adw.Application):
     def __init__(self):

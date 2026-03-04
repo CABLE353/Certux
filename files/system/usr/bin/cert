@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Certux Universal Engine v4.0
+# Certux Universal Engine v5.0
 
 COMMAND=$1
 TARGET=$2
@@ -18,14 +18,34 @@ ensure_container() {
 case "$COMMAND" in
     search)
         if [ -z "$TARGET" ]; then echo "Usage: cert search <query>"; exit 1; fi
-        echo -e "\n🔍 Searching Certux Ecosystem for: \033[1;36m$TARGET\033[0m"
+        echo "🔍 Searching Certux Ecosystem for: $TARGET"
         echo "=========================================================="
-        echo -e "\033[1;34m📦 FLATPAK (Modern Sandboxed Apps):\033[0m"
+        echo "📦 FLATPAK (Modern Sandboxed Apps):"
         flatpak search "$TARGET" --columns=application,name,description | head -n 6
         echo "=========================================================="
-        echo -e "\033[1;32m📦 DEBIAN SUBSYSTEM (Legacy Apps):\033[0m"
+        echo "📦 DEBIAN SUBSYSTEM (Legacy Apps):"
         ensure_container
         distrobox enter "$CONTAINER_NAME" -- bash -c "apt-cache search $TARGET | head -n 6"
+        echo "=========================================================="
+        ;;
+
+    list)
+        echo "=========================================================="
+        echo "📦 SYSTEM HOST (OSTree Overlays)"
+        echo "=========================================================="
+        rpm-ostree status -b | grep "LocalPackages" || echo "No local host packages layered."
+        echo ""
+        echo "=========================================================="
+        echo "📦 FLATPAK (Modern App Ecosystem)"
+        echo "=========================================================="
+        flatpak list --app --columns=name,application
+        echo ""
+        echo "=========================================================="
+        echo "📦 DEBIAN SUBSYSTEM (certux-legacy-layer)"
+        echo "=========================================================="
+        ensure_container
+        # Lists manually installed apt packages (filtering out dependencies for clarity)
+        distrobox enter "$CONTAINER_NAME" -- bash -c "apt-mark showmanual"
         echo "=========================================================="
         ;;
 
@@ -42,51 +62,45 @@ case "$COMMAND" in
     repo)
         ensure_container
         if [ "$TARGET" == "list" ]; then
-            echo -e "\n\033[1;34m--- FLATPAK REPOSITORIES ---\033[0m"
+            echo "--- FLATPAK REPOSITORIES ---"
             flatpak remotes
-            echo -e "\n\033[1;32m--- DEBIAN SUBSYSTEM REPOSITORIES ---\033[0m"
+            echo -e "\n--- DEBIAN SUBSYSTEM REPOSITORIES ---"
             distrobox enter "$CONTAINER_NAME" -- bash -c "cat /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null | grep -v '^#'"
         elif [ "$TARGET" == "add" ]; then
-            if [ -z "$EXTRA" ]; then echo "Usage: cert repo add <apt_repo_string>"; exit 1; fi
-            echo "➕ Adding repository to Debian Subsystem: $EXTRA"
+            echo "➕ Adding repository: $EXTRA"
             distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-add-repository '$EXTRA' -y && sudo apt-get update"
-        else
-            echo "Usage: cert repo list OR cert repo add <url>"
         fi
         ;;
         
     install)
         if [ -z "$TARGET" ]; then echo "Usage: cert install <package/file>"; exit 1; fi
         
-        # --- APPIMAGE ROUTING ---
-        if [[ "$TARGET" == *.AppImage || "$TARGET" == *.appimage || "$TARGET" == *.appImage ]]; then
+        if [[ "$TARGET" == *.AppImage || "$TARGET" == *.appimage ]]; then
             APP_DIR="$HOME/System/Apps"
             mkdir -p "$APP_DIR"
             BASENAME=$(basename "$TARGET")
             APP_NAME="${BASENAME%.*}"
-            echo "📥 AppImage detected. Securing in $APP_DIR..."
+            echo "📥 Securing AppImage in $APP_DIR..."
             cp "$TARGET" "$APP_DIR/$BASENAME"
             chmod +x "$APP_DIR/$BASENAME"
-            
             DESKTOP_FILE="$HOME/.local/share/applications/certux-${APP_NAME}.desktop"
             echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=$APP_DIR/$BASENAME\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$DESKTOP_FILE"
-            echo "✅ AppImage installed and bridged to Desktop!"
+            echo "✅ AppImage installed!"
             exit 0
         fi
 
-        # --- DEBIAN ROUTING & AUTO-HEALER ---
         ensure_container
         if [[ -f "$TARGET" && "$TARGET" == *.deb ]]; then
             FILE_PATH=$(realpath "$TARGET")
             echo "📥 Installing local .deb: $TARGET"
-            if ! distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update > /dev/null 2>&1 && sudo apt-get install -y '$FILE_PATH'"; then
-                echo "⚠️ Dependency mismatch detected. Triggering Auto-Healer..."
-                distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get install -f -y"
+            if ! distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y '$FILE_PATH'"; then
+                echo "⚠️ Resolving dependencies..."
+                distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get install -f -y"
             fi
             APP_NAME=$(distrobox enter "$CONTAINER_NAME" -- bash -c "dpkg-deb -f '$FILE_PATH' Package")
         else
             echo "📥 Installing web package: $TARGET"
-            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update > /dev/null 2>&1 && sudo apt-get install -y $TARGET"
+            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $TARGET"
             APP_NAME="$TARGET"
         fi
         
@@ -97,18 +111,13 @@ case "$COMMAND" in
 
     remove)
         ensure_container
-        if [ -z "$TARGET" ]; then echo "Usage: cert remove <package>"; exit 1; fi
         echo "🗑️ Removing $TARGET..."
         distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get remove -y $TARGET"
         ;;
-        
-    *)
-        echo -e "\033[1mCertux Unified Commands:\033[0m"
-        echo "  cert search <query>         - Search all repositories"
-        echo "  cert install <pkg/file>     - Install Web, .deb, or .AppImage"
-        echo "  cert remove <pkg>           - Remove an app"
-        echo "  cert upgrade                - Update entire OS"
-        echo "  cert repo list              - List all active repositories"
-        ;;
 esac
-read -p "Press Enter to exit..."
+
+# ONLY prompt for enter if we are running in an actual interactive terminal window.
+# If running silently inside the Python GUI, exit cleanly.
+if [ -t 0 ]; then
+    read -p "Press Enter to exit..."
+fi

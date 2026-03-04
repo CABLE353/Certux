@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Certux Universal Engine v6.0 - Master Edition
+# Certux Universal Engine v7.0 - "Zero-Failure Native UI" Edition
 
 COMMAND=$1
 TARGET=$2
 EXTRA=$3
 CONTAINER_NAME="certux-legacy-layer"
 BASE_IMAGE="debian:latest"
+DESKTOP_DIR="$HOME/.local/share/applications"
 
 ensure_container() {
     if ! distrobox list | grep -q "$CONTAINER_NAME"; then
@@ -13,6 +14,13 @@ ensure_container() {
         distrobox create --name "$CONTAINER_NAME" --image "$BASE_IMAGE" --yes > /dev/null 2>&1
         distrobox enter "$CONTAINER_NAME" -- bash -c "sudo dpkg --add-architecture i386 && sudo apt-get update > /dev/null 2>&1"
     fi
+}
+
+# The Scrubbing Routine: Makes container apps look 100% native
+native_integration_cleanup() {
+    echo "🧹 Applying Native OS Visual Integration..."
+    # Finds all desktop files and deletes the " (on container-name)" tag from the Name= line
+    sed -i "s/ (on ${CONTAINER_NAME})//g" "$DESKTOP_DIR/"*.desktop 2>/dev/null || true
 }
 
 case "$COMMAND" in
@@ -76,9 +84,10 @@ case "$COMMAND" in
         
     install)
         if [ -z "$TARGET" ]; then echo "Usage: cert install <package/file>"; exit 1; fi
+        mkdir -p "$DESKTOP_DIR"
         
         # --- APPIMAGE ROUTING ---
-        if [[ "$TARGET" == *.AppImage || "$TARGET" == *.appimage ]]; then
+        if [[ "$TARGET" == *.AppImage || "$TARGET" == *.appimage || "$TARGET" == *.appImage ]]; then
             APP_DIR="$HOME/System/Apps"
             mkdir -p "$APP_DIR"
             BASENAME=$(basename "$TARGET")
@@ -86,9 +95,10 @@ case "$COMMAND" in
             echo "📥 Securing AppImage in $APP_DIR..."
             cp "$TARGET" "$APP_DIR/$BASENAME"
             chmod +x "$APP_DIR/$BASENAME"
-            DESKTOP_FILE="$HOME/.local/share/applications/certux-${APP_NAME}.desktop"
+            DESKTOP_FILE="$DESKTOP_DIR/certux-${APP_NAME}.desktop"
             echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=$APP_DIR/$BASENAME\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$DESKTOP_FILE"
             echo "✅ AppImage installed and bridged to Desktop!"
+            native_integration_cleanup
             exit 0
         fi
 
@@ -108,31 +118,40 @@ case "$COMMAND" in
             APP_NAME="$TARGET"
         fi
         
-        # --- HONEST EXPORT LOGIC ---
+        # --- ZERO-FAILURE EXPORT LOGIC ---
         echo "🔗 Attempting to bridge $APP_NAME to your desktop..."
         
+        EXPORT_SUCCESS=false
+
         if distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $APP_NAME" > /dev/null 2>&1; then
             echo "✅ Successfully installed and exported $APP_NAME!"
+            EXPORT_SUCCESS=true
         else
-            # Fallback 1: Search for an exact .desktop file match
             FOUND_DESKTOP=$(distrobox enter "$CONTAINER_NAME" -- bash -c "ls /usr/share/applications | grep -i '$APP_NAME' | head -n 1")
             if [ -n "$FOUND_DESKTOP" ]; then
                 CLEAN_NAME="${FOUND_DESKTOP%.desktop}"
                 if distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $CLEAN_NAME" > /dev/null 2>&1; then
                     echo "✅ Found and exported $CLEAN_NAME!"
-                else
-                    echo "❌ Error: Could not export $APP_NAME. App installed, but shortcut bridging failed."
+                    EXPORT_SUCCESS=true
                 fi
             else
-                # Fallback 2: Strip trailing characters (e.g., google-chrome-stable -> google-chrome)
                 SHORT_NAME="${APP_NAME%%-*}"
                 if [ "$SHORT_NAME" != "$APP_NAME" ] && distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $SHORT_NAME" > /dev/null 2>&1; then
                     echo "✅ Successfully installed and exported $SHORT_NAME!"
-                else
-                    echo "❌ Error: $APP_NAME installed, but no desktop shortcut was found to export."
+                    EXPORT_SUCCESS=true
                 fi
             fi
         fi
+
+        # --- THE BRUTE FORCE FALLBACK ---
+        if [ "$EXPORT_SUCCESS" = false ]; then
+            echo "⚠️ Standard bridging failed. Engaging Brute-Force Shortcut Generator..."
+            BRUTE_DESKTOP="$DESKTOP_DIR/certux-bruteforce-${APP_NAME}.desktop"
+            echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=/usr/bin/distrobox-enter -n $CONTAINER_NAME -- $APP_NAME\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$BRUTE_DESKTOP"
+            echo "✅ Brute-Force shortcut created for $APP_NAME!"
+        fi
+
+        native_integration_cleanup
         ;;
 
     remove)
@@ -140,6 +159,9 @@ case "$COMMAND" in
         if [ -z "$TARGET" ]; then echo "Usage: cert remove <package>"; exit 1; fi
         echo "🗑️ Removing $TARGET..."
         distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get remove -y $TARGET"
+        # Cleanup potential generated shortcuts
+        rm -f "$DESKTOP_DIR/certux-bruteforce-${TARGET}.desktop" 2>/dev/null || true
+        rm -f "$DESKTOP_DIR/${CONTAINER_NAME}-${TARGET}.desktop" 2>/dev/null || true
         echo "✅ Removed $TARGET."
         ;;
         
@@ -155,7 +177,6 @@ case "$COMMAND" in
         ;;
 esac
 
-# Only pause if run from a standard interactive terminal
 if [ -t 0 ]; then
     read -p "Press Enter to exit..."
 fi

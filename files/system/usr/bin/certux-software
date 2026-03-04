@@ -1,58 +1,62 @@
 #!/usr/bin/env python3
 import gi
 import subprocess
-import os
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, Gio
+from gi.repository import Gtk, Adw
 
 class CertuxSoftwareWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Certux Software Center")
         self.set_default_size(800, 600)
 
-        # Header Bar
         header = Adw.HeaderBar()
-        
-        # Main Layout
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.append(header)
         
-        # Welcome Text
-        label = Gtk.Label(label="<span size='xx-large' weight='bold'>Certux System Manager</span>", use_markup=True)
+        label = Gtk.Label(label="<span size='xx-large' weight='bold'>Certux Unified Ecosystem</span>", use_markup=True)
         label.set_margin_top(40)
         label.set_margin_bottom(20)
         
-        # Buttons Box
         btn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
         btn_box.set_halign(Gtk.Align.CENTER)
 
-        # Install Package Button
+        # Search Bar
+        search_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.search_entry = Gtk.Entry(placeholder_text="Search for an app...")
+        search_btn = Gtk.Button(label="Search Repos")
+        search_btn.connect("clicked", self.on_search_clicked)
+        search_box.append(self.search_entry)
+        search_box.append(search_btn)
+
+        # Install Box
         install_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        self.pkg_entry = Gtk.Entry(placeholder_text="Enter package name (e.g. vlc)")
-        install_btn = Gtk.Button(label="Install Package")
+        self.pkg_entry = Gtk.Entry(placeholder_text="Type exact package name to install")
+        install_btn = Gtk.Button(label="Install")
         install_btn.connect("clicked", self.on_install_clicked)
         install_box.append(self.pkg_entry)
         install_box.append(install_btn)
 
-        # Upgrade System Button
         upgrade_btn = Gtk.Button(label="Upgrade Entire System")
-        upgrade_btn.add_css_class("suggested-action") # Makes it blue/accent color
+        upgrade_btn.add_css_class("suggested-action")
         upgrade_btn.connect("clicked", self.on_upgrade_clicked)
 
-        # Build UI
+        btn_box.append(search_box)
         btn_box.append(install_box)
         btn_box.append(upgrade_btn)
         
         box.append(label)
         box.append(btn_box)
-        
         self.set_content(box)
 
     def run_cert_command(self, command):
-        # Pops open a terminal to show the user the progress of the 'cert' script
         subprocess.Popen(["gnome-terminal", "--", "bash", "-c", f"{command}"])
+
+    def on_search_clicked(self, button):
+        query = self.search_entry.get_text()
+        if query:
+            self.run_cert_command(f"cert search {query}")
 
     def on_install_clicked(self, button):
         pkg = self.pkg_entry.get_text()

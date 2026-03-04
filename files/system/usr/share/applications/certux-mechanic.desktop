@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Certux Mechanic installer
 Comment=Securely install legacy Debian packages
-Exec=gnome-terminal -- /usr/bin/cert-install %f
+Exec=gnome-terminal -- /usr/bin/cert install %f
 Icon=system-software-install
 Terminal=false
 Type=Application

@@ -22,9 +22,6 @@ modules:
       - "chmod +x /usr/bin/certux-law-setup"
 
   - type: dnf
-    repos:
-      copr:
-        - atim/starship
     install:
       packages:
         - micro

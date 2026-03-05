@@ -166,8 +166,14 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
             process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             for line in process.stdout:
                 GLib.idle_add(self.append_console, line)
-            process.wait()
-            GLib.idle_add(self.append_console, "\n✅ Task Finished.\n")
+            
+            process.wait() # Wait for the script to finish
+            
+            # Check the exit code! 0 means success, anything else means failure.
+            if process.returncode == 0:
+                GLib.idle_add(self.append_console, "\n✅ Task Finished Successfully.\n")
+            else:
+                GLib.idle_add(self.append_console, f"\n❌ Task Failed (Error Code: {process.returncode}). Check output above.\n")
 
         threading.Thread(target=worker, daemon=True).start()
 

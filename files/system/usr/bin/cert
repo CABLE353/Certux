@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Certux Universal Engine v7.3 - "Honest Failure & Suggestions"
+# Certux Universal Engine v7.4 - "The Complete Foundation"
 
 COMMAND=$1
 TARGET=$2
@@ -23,8 +23,62 @@ native_integration_cleanup() {
 }
 
 case "$COMMAND" in
-    search|list|upgrade|repo)
-        # [Keep these exact same blocks from v7.2 - removed here for brevity, paste your existing ones back in]
+    search)
+        if [ -z "$TARGET" ]; then echo "Usage: cert search <query>"; exit 1; fi
+        echo -e "\n🔍 Searching Certux Ecosystem for: $TARGET"
+        echo "=========================================================="
+        echo "📦 FLATPAK (Modern Sandboxed Apps):"
+        flatpak search "$TARGET" --columns=application,name,description | head -n 6
+        echo "=========================================================="
+        echo "📦 DEBIAN SUBSYSTEM (Legacy Apps):"
+        ensure_container
+        distrobox enter "$CONTAINER_NAME" -- bash -c "apt-cache search $TARGET | head -n 6"
+        echo "=========================================================="
+        ;;
+
+    list)
+        echo "=========================================================="
+        echo "📦 SYSTEM HOST (OSTree Overlays)"
+        echo "=========================================================="
+        rpm-ostree status -b | grep "LocalPackages" || echo "No local host packages layered."
+        echo ""
+        echo "=========================================================="
+        echo "📦 FLATPAK (Modern App Ecosystem)"
+        echo "=========================================================="
+        flatpak list --app --columns=name,application
+        echo ""
+        echo "=========================================================="
+        echo "📦 DEBIAN SUBSYSTEM (certux-legacy-layer)"
+        echo "=========================================================="
+        ensure_container
+        distrobox enter "$CONTAINER_NAME" -- bash -c "apt-mark showmanual"
+        echo "=========================================================="
+        ;;
+
+    upgrade)
+        echo "🔄 Upgrading Certux Ecosystem..."
+        sudo rpm-ostree upgrade
+        flatpak update -y
+        if distrobox list | grep -q "$CONTAINER_NAME"; then
+            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y"
+        fi
+        echo "✅ Universal Upgrade complete!"
+        ;;
+
+    repo)
+        ensure_container
+        if [ "$TARGET" == "list" ]; then
+            echo -e "\n--- FLATPAK REPOSITORIES ---"
+            flatpak remotes
+            echo -e "\n--- DEBIAN SUBSYSTEM REPOSITORIES ---"
+            distrobox enter "$CONTAINER_NAME" -- bash -c "cat /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null | grep -v '^#'"
+        elif [ "$TARGET" == "add" ]; then
+            if [ -z "$EXTRA" ]; then echo "Usage: cert repo add <url>"; exit 1; fi
+            echo "➕ Adding repository: $EXTRA"
+            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-add-repository '$EXTRA' -y && sudo apt-get update"
+        else
+            echo "Usage: cert repo list OR cert repo add <url>"
+        fi
         ;;
 
     install)
@@ -53,7 +107,6 @@ case "$COMMAND" in
             APP_NAME=$(distrobox enter "$CONTAINER_NAME" -- bash -c "dpkg-deb -f '$FILE_PATH' Package")
         else
             echo "📥 Installing web package: $TARGET"
-            # THE NEW FAILURE TRAP
             if ! distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $TARGET"; then
                 echo "❌ CRITICAL ERROR: Package '$TARGET' not found or failed to install."
                 echo "🔍 Did you mean one of these?"
@@ -108,5 +161,24 @@ case "$COMMAND" in
         native_integration_cleanup
         ;;
 
-    # ... [Keep your remove block here] ...
+    remove)
+        ensure_container
+        if [ -z "$TARGET" ]; then echo "Usage: cert remove <package>"; exit 1; fi
+        echo "🗑️ Removing $TARGET..."
+        distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get remove -y $TARGET"
+        rm -f "$REAL_DESKTOP_DIR/certux-bruteforce-${TARGET}.desktop" 2>/dev/null || true
+        rm -f "$REAL_DESKTOP_DIR/${CONTAINER_NAME}-${TARGET}.desktop" 2>/dev/null || true
+        echo "✅ Removed $TARGET."
+        ;;
+        
+    *)
+        echo -e "Certux Unified Commands:"
+        echo "  cert search <query>         - Search all repositories"
+        echo "  cert install <pkg/file>     - Install Web, .deb, or .AppImage"
+        echo "  cert remove <pkg>           - Remove an app"
+        echo "  cert upgrade                - Update entire OS"
+        echo "  cert list                   - List installed apps/packages"
+        echo "  cert repo list              - List all active repositories"
+        echo "  cert repo add <url>         - Add a Debian PPA or repo URL"
+        ;;
 esac

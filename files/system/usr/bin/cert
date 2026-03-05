@@ -1,77 +1,74 @@
 #!/usr/bin/env bash
-# Certux Universal Engine v7.2 - "Visible Apps & Strict Verification"
+# Certux Universal Engine v7.3 - "Honest Failure & Suggestions"
 
 COMMAND=$1
 TARGET=$2
 EXTRA=$3
 CONTAINER_NAME="certux-legacy-layer"
 BASE_IMAGE="debian:latest"
-# Pointing directly to your new visible master folder
-DESKTOP_DIR="$HOME/System/Apps"
+REAL_DESKTOP_DIR="$HOME/.local/share/applications"
 
 ensure_container() {
     if ! distrobox list | grep -q "$CONTAINER_NAME"; then
         echo "📦 Initializing Certux Subsystem..."
         distrobox create --name "$CONTAINER_NAME" --image "$BASE_IMAGE" --yes > /dev/null 2>&1
-        # Pre-installing standard GUI scaffolding so massive apps like Chrome don't panic
-        distrobox enter "$CONTAINER_NAME" -- bash -c "sudo dpkg --add-architecture i386 && sudo apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common xdg-utils wget curl"
+        distrobox enter "$CONTAINER_NAME" -- bash -c "sudo dpkg --add-architecture i386 && sudo apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common xdg-utils"
     fi
 }
 
 native_integration_cleanup() {
     echo "🧹 Applying Native OS Visual Integration..."
-    sed -i "s/ (on ${CONTAINER_NAME})//g" "$DESKTOP_DIR/"*.desktop 2>/dev/null || true
-    chmod +x "$DESKTOP_DIR/"*.desktop 2>/dev/null || true
+    sed -i "s/ (on ${CONTAINER_NAME})//g" "$REAL_DESKTOP_DIR/"*.desktop 2>/dev/null || true
+    chmod +x "$REAL_DESKTOP_DIR/"*.desktop 2>/dev/null || true
 }
 
 case "$COMMAND" in
-    # ... [Search, List, Upgrade, Repo commands remain identical to previous version] ...
+    search|list|upgrade|repo)
+        # [Keep these exact same blocks from v7.2 - removed here for brevity, paste your existing ones back in]
+        ;;
 
     install)
         if [ -z "$TARGET" ]; then echo "Usage: cert install <package/file>"; exit 1; fi
-        mkdir -p "$DESKTOP_DIR"
+        mkdir -p "$REAL_DESKTOP_DIR"
         
-        # --- APPIMAGE ROUTING ---
-        if [[ "$TARGET" == *.AppImage || "$TARGET" == *.appimage || "$TARGET" == *.appImage ]]; then
+        if [[ "$TARGET" == *.AppImage || "$TARGET" == *.appimage ]]; then
             BASENAME=$(basename "$TARGET")
             APP_NAME="${BASENAME%.*}"
-            echo "📥 Securing AppImage in $DESKTOP_DIR..."
-            cp "$TARGET" "$DESKTOP_DIR/$BASENAME"
-            chmod +x "$DESKTOP_DIR/$BASENAME"
-            DESKTOP_FILE="$DESKTOP_DIR/certux-${APP_NAME}.desktop"
-            echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=$DESKTOP_DIR/$BASENAME\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$DESKTOP_FILE"
+            echo "📥 Securing AppImage..."
+            cp "$TARGET" "$REAL_DESKTOP_DIR/$BASENAME"
+            chmod +x "$REAL_DESKTOP_DIR/$BASENAME"
+            echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=$REAL_DESKTOP_DIR/$BASENAME\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$REAL_DESKTOP_DIR/certux-${APP_NAME}.desktop"
             echo "✅ AppImage installed!"
             native_integration_cleanup
             exit 0
         fi
 
-        # --- DEBIAN ROUTING & AUTO-HEALER ---
         ensure_container
         if [[ -f "$TARGET" && "$TARGET" == *.deb ]]; then
             FILE_PATH=$(realpath "$TARGET")
             echo "📥 Installing local .deb: $TARGET"
-            # We force it to answer 'yes' to all prompts so it doesn't silently abort
             if ! distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y '$FILE_PATH'"; then
-                echo "⚠️ Dependency mismatch detected. Triggering Auto-Healer..."
                 distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get install -f -y"
             fi
             APP_NAME=$(distrobox enter "$CONTAINER_NAME" -- bash -c "dpkg-deb -f '$FILE_PATH' Package")
         else
             echo "📥 Installing web package: $TARGET"
-            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $TARGET"
+            # THE NEW FAILURE TRAP
+            if ! distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $TARGET"; then
+                echo "❌ CRITICAL ERROR: Package '$TARGET' not found or failed to install."
+                echo "🔍 Did you mean one of these?"
+                distrobox enter "$CONTAINER_NAME" -- bash -c "apt-cache search $TARGET | head -n 5"
+                exit 1
+            fi
             APP_NAME="$TARGET"
         fi
         
-        # --- STRICT VERIFICATION (The "Prove It" Check) ---
         echo "🔎 Verifying binary exists in container..."
-        
-        # We check if the binary is actually executable inside the container
         BINARY_EXISTS=false
         if distrobox enter "$CONTAINER_NAME" -- bash -c "command -v $APP_NAME" > /dev/null 2>&1; then
              BINARY_EXISTS=true
              EXEC_CMD="$APP_NAME"
         else
-             # Sometimes the binary name is different than the package name (e.g., google-chrome-stable -> google-chrome)
              SHORT_NAME="${APP_NAME%%-*}"
              if distrobox enter "$CONTAINER_NAME" -- bash -c "command -v $SHORT_NAME" > /dev/null 2>&1; then
                  BINARY_EXISTS=true
@@ -80,39 +77,36 @@ case "$COMMAND" in
         fi
 
         if [ "$BINARY_EXISTS" = false ]; then
-             echo "❌ CRITICAL ERROR: Installation failed. The binary for '$APP_NAME' could not be found."
-             echo "This usually means the package dependencies were broken. Aborting shortcut creation."
+             echo "❌ CRITICAL ERROR: Binary for '$APP_NAME' could not be found. Aborting shortcut creation."
              exit 1
         fi
 
-        # --- ZERO-FAILURE EXPORT LOGIC ---
         echo "🔗 Bridging $EXEC_CMD to your desktop..."
         EXPORT_SUCCESS=false
 
-        if distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $APP_NAME --export-path $DESKTOP_DIR" > /dev/null 2>&1; then
+        if distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $APP_NAME --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1; then
             EXPORT_SUCCESS=true
         else
             FOUND_DESKTOP=$(distrobox enter "$CONTAINER_NAME" -- bash -c "ls /usr/share/applications | grep -i '$APP_NAME' | head -n 1")
             if [ -n "$FOUND_DESKTOP" ]; then
                 CLEAN_NAME="${FOUND_DESKTOP%.desktop}"
-                if distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $CLEAN_NAME --export-path $DESKTOP_DIR" > /dev/null 2>&1; then
+                if distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $CLEAN_NAME --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1; then
                     EXPORT_SUCCESS=true
                 fi
-            elif distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $EXEC_CMD --export-path $DESKTOP_DIR" > /dev/null 2>&1; then
+            elif distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $EXEC_CMD --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1; then
                 EXPORT_SUCCESS=true
             fi
         fi
 
-        # --- THE BRUTE FORCE FALLBACK ---
         if [ "$EXPORT_SUCCESS" = false ]; then
             echo "⚠️ Standard bridging failed. Engaging Brute-Force Shortcut Generator..."
-            BRUTE_DESKTOP="$DESKTOP_DIR/certux-bruteforce-${APP_NAME}.desktop"
+            BRUTE_DESKTOP="$REAL_DESKTOP_DIR/certux-bruteforce-${APP_NAME}.desktop"
             echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=/usr/bin/distrobox-enter -n $CONTAINER_NAME -- $EXEC_CMD\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$BRUTE_DESKTOP"
         fi
 
         echo "✅ Successfully installed and bridged!"
         native_integration_cleanup
         ;;
-        
-    # ... [Remove and default blocks remain identical] ...
+
+    # ... [Keep your remove block here] ...
 esac

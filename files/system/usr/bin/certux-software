@@ -24,7 +24,6 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         self.view_stack.add_titled(page_repos, "repos", "Repositories")
 
         view_switcher = Adw.ViewSwitcherTitle(stack=self.view_stack)
-        
         header = Adw.HeaderBar()
         header.set_title_widget(view_switcher)
 
@@ -125,49 +124,51 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         query = self.search_entry.get_text()
         if not query: return
         self._clear_list(self.results_list)
-        self.results_list.append(Adw.ActionRow(title="Querying repositories... (Check Verbose Output if stalled)"))
+        self.results_list.append(Adw.ActionRow(title="Querying repositories... (Check Verbose Output)"))
         
-        # We dump errors to the console so it's not silent
         self.append_console(f"\n[API] Searching for '{query}'...\n")
         
+        # New Streaming Architecture
         def worker():
-            process = subprocess.Popen(f"/usr/bin/cert --gui search '{query}' </dev/null", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            output, err = process.communicate()
-            if err:
-                GLib.idle_add(self.append_console, f"[API ERROR] {err}\n")
-            GLib.idle_add(self.populate_search_results, output)
+            process = subprocess.Popen(f"/usr/bin/cert --gui search '{query}'", shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            results_data = []
+            for line in process.stdout:
+                GLib.idle_add(self.append_console, line) # Dumps everything to the console visually!
+                if line.startswith("API|SEARCH|"):
+                    results_data.append(line.strip())
+            process.wait()
+            GLib.idle_add(self.populate_search_results, results_data)
         threading.Thread(target=worker, daemon=True).start()
 
-    def populate_search_results(self, output):
+    def populate_search_results(self, results_data):
         self._clear_list(self.results_list)
         has_results = False
-        for line in output.split('\n'):
-            if line.startswith("API|SEARCH|"):
-                has_results = True
-                parts = line.split('|')
-                if len(parts) >= 7:
-                    source, app_id, name, desc, repo = parts[2], parts[3], parts[4], parts[5], parts[6]
-                    
-                    row = Adw.ActionRow(title=f"<b>{name}</b>  <span foreground='gray' size='small'>({source})</span>", subtitle=desc)
-                    row.set_title_lines(1)
-                    row.get_title().set_use_markup(True)
-                    
-                    btn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-                    btn_box.set_valign(Gtk.Align.CENTER)
-                    btn_box.set_margin_top(5)
-                    btn_box.set_margin_bottom(5)
-                    
-                    btn = Gtk.Button(label="Install")
-                    btn.add_css_class("suggested-action")
-                    btn.add_css_class("pill")
-                    btn.connect("clicked", lambda b, pkg=app_id: self.run_cert_command(f"/usr/bin/cert install '{pkg}'"))
-                    
-                    repo_label = Gtk.Label(label=f"<span size='x-small' foreground='gray'>Repo: {repo}</span>", use_markup=True)
-                    
-                    btn_box.append(btn)
-                    btn_box.append(repo_label)
-                    row.add_suffix(btn_box)
-                    self.results_list.append(row)
+        for line in results_data:
+            has_results = True
+            parts = line.split('|', 6) # Splitting exactly 6 times to avoid parsing errors
+            if len(parts) >= 7:
+                source, app_id, name, desc, repo = parts[2], parts[3], parts[4], parts[5], parts[6]
+                
+                row = Adw.ActionRow(title=f"<b>{name}</b>  <span foreground='gray' size='small'>({source})</span>", subtitle=desc)
+                row.set_title_lines(1)
+                row.get_title().set_use_markup(True)
+                
+                btn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                btn_box.set_valign(Gtk.Align.CENTER)
+                btn_box.set_margin_top(5)
+                btn_box.set_margin_bottom(5)
+                
+                btn = Gtk.Button(label="Install")
+                btn.add_css_class("suggested-action")
+                btn.add_css_class("pill")
+                btn.connect("clicked", lambda b, pkg=app_id: self.run_cert_command(f"/usr/bin/cert install '{pkg}'"))
+                
+                repo_label = Gtk.Label(label=f"<span size='x-small' foreground='gray'>Repo: {repo}</span>", use_markup=True)
+                
+                btn_box.append(btn)
+                btn_box.append(repo_label)
+                row.add_suffix(btn_box)
+                self.results_list.append(row)
                     
         if not has_results:
             self.results_list.append(Adw.ActionRow(title="No results found."))
@@ -184,12 +185,11 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         header_box.append(Gtk.Label(label="<span size='x-large' weight='bold'>System Operations</span>", use_markup=True, hexpand=True, halign=Gtk.Align.START))
         
-        # Split Updates
         up_apps_btn = Gtk.Button(label="Update All Apps")
         up_apps_btn.connect("clicked", lambda b: self.run_cert_command("/usr/bin/cert update-apps"))
         
         up_sys_btn = Gtk.Button(label="Update Core OS")
-        up_sys_btn.add_css_class("suggested-action") # Highlights the Core OS update
+        up_sys_btn.add_css_class("suggested-action")
         up_sys_btn.connect("clicked", lambda b: self.run_cert_command("/usr/bin/cert update-sys"))
         
         ref_btn = Gtk.Button(icon_name="view-refresh-symbolic")
@@ -216,44 +216,45 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         
         self.append_console(f"\n[API] Listing installed apps...\n")
         def worker():
-            process = subprocess.Popen("/usr/bin/cert --gui list </dev/null", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            output, err = process.communicate()
-            if err:
-                GLib.idle_add(self.append_console, f"[API ERROR] {err}\n")
-            GLib.idle_add(self.populate_installed, output)
+            process = subprocess.Popen("/usr/bin/cert --gui list", shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            results_data = []
+            for line in process.stdout:
+                GLib.idle_add(self.append_console, line)
+                if line.startswith("API|LIST|"):
+                    results_data.append(line.strip())
+            process.wait()
+            GLib.idle_add(self.populate_installed, results_data)
         threading.Thread(target=worker, daemon=True).start()
 
-    def populate_installed(self, output):
+    def populate_installed(self, results_data):
         self._clear_list(self.installed_list)
-        for line in output.split('\n'):
-            if line.startswith("API|LIST|"):
-                parts = line.split('|')
-                if len(parts) >= 6:
-                    source, app_id, name, repo = parts[2], parts[3], parts[4], parts[5]
-                    
-                    row = Adw.ActionRow(title=f"<b>{name}</b>", subtitle=f"Repo: {repo} | ID: {app_id}")
-                    row.get_title().set_use_markup(True)
-                    
-                    # Box for side-by-side Open/Remove buttons
-                    action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
-                    action_box.set_valign(Gtk.Align.CENTER)
-                    action_box.set_margin_top(10)
-                    action_box.set_margin_bottom(10)
-                    
-                    open_btn = Gtk.Button(label="Open")
-                    open_btn.add_css_class("suggested-action")
-                    open_btn.add_css_class("pill")
-                    open_btn.connect("clicked", lambda b, s=source, pkg=app_id: self.run_cert_command(f"/usr/bin/cert launch {s} '{pkg}'"))
-                    
-                    rem_btn = Gtk.Button(label="Remove")
-                    rem_btn.add_css_class("destructive-action")
-                    rem_btn.add_css_class("pill")
-                    rem_btn.connect("clicked", lambda b, pkg=app_id: self.run_cert_command(f"/usr/bin/cert remove '{pkg}'"))
-                    
-                    action_box.append(open_btn)
-                    action_box.append(rem_btn)
-                    row.add_suffix(action_box)
-                    self.installed_list.append(row)
+        for line in results_data:
+            parts = line.split('|', 5)
+            if len(parts) >= 6:
+                source, app_id, name, repo = parts[2], parts[3], parts[4], parts[5]
+                
+                row = Adw.ActionRow(title=f"<b>{name}</b>", subtitle=f"Repo: {repo} | ID: {app_id}")
+                row.get_title().set_use_markup(True)
+                
+                action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+                action_box.set_valign(Gtk.Align.CENTER)
+                action_box.set_margin_top(10)
+                action_box.set_margin_bottom(10)
+                
+                open_btn = Gtk.Button(label="Open")
+                open_btn.add_css_class("suggested-action") # Makes it primary/accent color
+                open_btn.add_css_class("pill")
+                open_btn.connect("clicked", lambda b, s=source, pkg=app_id: self.run_cert_command(f"/usr/bin/cert launch {s} '{pkg}'"))
+                
+                rem_btn = Gtk.Button(label="Remove")
+                rem_btn.add_css_class("destructive-action") # Makes it native Red
+                rem_btn.add_css_class("pill")
+                rem_btn.connect("clicked", lambda b, pkg=app_id: self.run_cert_command(f"/usr/bin/cert remove '{pkg}'"))
+                
+                action_box.append(open_btn)
+                action_box.append(rem_btn)
+                row.add_suffix(action_box)
+                self.installed_list.append(row)
 
     # ==========================================
     # TAB 3: REPOS PAGE
@@ -296,28 +297,30 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         self._clear_list(self.repo_list)
         self.append_console(f"\n[API] Scanning system repositories...\n")
         def worker():
-            process = subprocess.Popen("/usr/bin/cert --gui repo </dev/null", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            output, err = process.communicate()
-            if err:
-                GLib.idle_add(self.append_console, f"[API ERROR] {err}\n")
-            GLib.idle_add(self.populate_repos, output)
+            process = subprocess.Popen("/usr/bin/cert --gui repo", shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            results_data = []
+            for line in process.stdout:
+                GLib.idle_add(self.append_console, line)
+                if line.startswith("API|REPO|"):
+                    results_data.append(line.strip())
+            process.wait()
+            GLib.idle_add(self.populate_repos, results_data)
         threading.Thread(target=worker, daemon=True).start()
 
-    def populate_repos(self, output):
+    def populate_repos(self, results_data):
         self._clear_list(self.repo_list)
-        for line in output.split('\n'):
-            if line.startswith("API|REPO|"):
-                parts = line.split('|')
-                if len(parts) >= 4:
-                    source, url = parts[2], parts[3]
-                    row = Adw.ActionRow(title=url, subtitle=f"{source} Repository")
-                    row.set_title_lines(1)
-                    
-                    status = Gtk.Label(label="<span size='small' foreground='green'>● Active</span>", use_markup=True)
-                    status.set_valign(Gtk.Align.CENTER)
-                    row.add_suffix(status)
-                    
-                    self.repo_list.append(row)
+        for line in results_data:
+            parts = line.split('|', 3)
+            if len(parts) >= 4:
+                source, url = parts[2], parts[3]
+                row = Adw.ActionRow(title=url, subtitle=f"{source} Repository")
+                row.set_title_lines(1)
+                
+                status = Gtk.Label(label="<span size='small' foreground='green'>● Active</span>", use_markup=True)
+                status.set_valign(Gtk.Align.CENTER)
+                row.add_suffix(status)
+                
+                self.repo_list.append(row)
 
     # ==========================================
     # UTILS & EXECUTION
@@ -341,7 +344,7 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
             else:
                 GLib.idle_add(self.append_console, f"\n❌ Task Failed (Error Code: {process.returncode}). Check output above.\n")
                 
-            if "install" in command or "remove" in command or "update" in command:
+            if "install" in command or "remove" in command or "update-apps" in command:
                 GLib.idle_add(self.refresh_installed)
 
         threading.Thread(target=worker, daemon=True).start()

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Certux Universal Engine v8.0 - "Polkit UAC & App Management"
+# Certux Universal Engine v8.1 - "Bulletproof API & Awk Parsers"
 
 GUI_MODE=false
 if [ "$1" == "--gui" ]; then
@@ -28,40 +28,29 @@ native_integration_cleanup() {
     chmod +x "$REAL_DESKTOP_DIR/"*.desktop 2>/dev/null || true
 }
 
-# --- THE MACHINE-READABLE GUI OUTPUT ---
+# --- THE MACHINE-READABLE GUI OUTPUT (AWK Engine) ---
 if [ "$GUI_MODE" = true ]; then
     case "$COMMAND" in
         search)
-            flatpak search "$TARGET" --columns=application,name,description,remotes </dev/null 2>/dev/null | tail -n +2 | head -n 8 | while IFS=$'\t' read -r app name desc remote; do
-                [ -z "$app" ] && continue
-                echo "API|SEARCH|Flatpak|$app|$name|$desc|$remote"
-            done
+            # Flatpak awk parser (NR>1 skips the header)
+            flatpak search "$TARGET" --columns=application,name,description,remotes 2>/dev/null | awk -F'\t' 'NR>1 {print "API|SEARCH|Flatpak|"$1"|"$2"|"$3"|"$4}' | head -n 8
+            
+            # Debian awk parser
             ensure_container >/dev/null 2>&1
-            distrobox enter "$CONTAINER_NAME" -- bash -c "apt-cache search '$TARGET' | head -n 8" </dev/null 2>/dev/null | while read -r line; do
-                [ -z "$line" ] && continue
-                app="${line%% - *}"
-                desc="${line#* - }"
-                echo "API|SEARCH|Debian|$app|$app|$desc|Debian APT Repository"
-            done
+            distrobox-enter -n "$CONTAINER_NAME" -- apt-cache search "$TARGET" 2>/dev/null | head -n 8 | awk -F' - ' '{print "API|SEARCH|Debian|"$1"|"$1"|"$2"|Debian Sandbox"}'
             ;;
         list)
-            flatpak list --app --columns=application,name,origin </dev/null 2>/dev/null | tail -n +2 | while IFS=$'\t' read -r app name origin; do
-                [ -z "$app" ] && continue
-                echo "API|LIST|Flatpak|$app|$name|$origin"
-            done
+            # Flatpak awk parser
+            flatpak list --app --columns=application,name,origin 2>/dev/null | awk -F'\t' 'NR>1 {print "API|LIST|Flatpak|"$1"|"$2"|"$3}'
+            
+            # Debian awk parser
             ensure_container >/dev/null 2>&1
-            distrobox enter "$CONTAINER_NAME" -- bash -c "apt-mark showmanual" </dev/null 2>/dev/null | while read -r app; do
-                [ -z "$app" ] && continue
-                echo "API|LIST|Debian|$app|$app|Debian Local Sandbox"
-            done
+            distrobox-enter -n "$CONTAINER_NAME" -- apt-mark showmanual 2>/dev/null | awk '{print "API|LIST|Debian|"$1"|"$1"|Debian Sandbox"}'
             ;;
         repo)
             echo "API|REPO|Flatpak|Flathub Universal Linux Registry"
             ensure_container >/dev/null 2>&1
-            distrobox enter "$CONTAINER_NAME" -- bash -c "cat /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null | grep -v '^#' | grep -v '^$'" </dev/null 2>/dev/null | while read -r line; do
-                [ -z "$line" ] && continue
-                echo "API|REPO|Debian|$line"
-            done
+            distrobox-enter -n "$CONTAINER_NAME" -- bash -c "grep -E '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null" | awk '{print "API|REPO|Debian|"$0}'
             ;;
     esac
     exit 0
@@ -71,7 +60,6 @@ fi
 case "$COMMAND" in
     update-sys)
         echo "🔄 Requesting authorization for Core OS Upgrade..."
-        # pkexec triggers the native Linux UI Password Prompt!
         pkexec rpm-ostree upgrade
         echo "✅ Core OS Upgrade complete! Please reboot to apply."
         ;;

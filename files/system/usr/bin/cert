@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Certux Universal Engine v7.5 - "The API Edition"
+# Certux Universal Engine v8.0 - "Polkit UAC & App Management"
 
-# --- THE HIDDEN GUI API INTERCEPTOR ---
 GUI_MODE=false
 if [ "$1" == "--gui" ]; then
     GUI_MODE=true
@@ -33,35 +32,33 @@ native_integration_cleanup() {
 if [ "$GUI_MODE" = true ]; then
     case "$COMMAND" in
         search)
-            # Fetch Flatpaks: Format -> API|SEARCH|Flatpak|AppID|Name|Desc|Repo
-            flatpak search "$TARGET" --columns=application,name,description,remotes 2>/dev/null | tail -n +2 | head -n 8 | while IFS=$'\t' read -r app name desc remote; do
+            flatpak search "$TARGET" --columns=application,name,description,remotes </dev/null 2>/dev/null | tail -n +2 | head -n 8 | while IFS=$'\t' read -r app name desc remote; do
                 [ -z "$app" ] && continue
                 echo "API|SEARCH|Flatpak|$app|$name|$desc|$remote"
             done
-            # Fetch Debian: Format -> API|SEARCH|Debian|AppID|Name|Desc|Repo
             ensure_container >/dev/null 2>&1
-            distrobox enter "$CONTAINER_NAME" -- bash -c "apt-cache search '$TARGET' | head -n 8" 2>/dev/null | while read -r line; do
+            distrobox enter "$CONTAINER_NAME" -- bash -c "apt-cache search '$TARGET' | head -n 8" </dev/null 2>/dev/null | while read -r line; do
                 [ -z "$line" ] && continue
                 app="${line%% - *}"
                 desc="${line#* - }"
-                echo "API|SEARCH|Debian|$app|$app|$desc|Debian APT"
+                echo "API|SEARCH|Debian|$app|$app|$desc|Debian APT Repository"
             done
             ;;
         list)
-            flatpak list --app --columns=application,name 2>/dev/null | tail -n +2 | while IFS=$'\t' read -r app name; do
+            flatpak list --app --columns=application,name,origin </dev/null 2>/dev/null | tail -n +2 | while IFS=$'\t' read -r app name origin; do
                 [ -z "$app" ] && continue
-                echo "API|LIST|Flatpak|$app|$name"
+                echo "API|LIST|Flatpak|$app|$name|$origin"
             done
             ensure_container >/dev/null 2>&1
-            distrobox enter "$CONTAINER_NAME" -- bash -c "apt-mark showmanual" 2>/dev/null | while read -r app; do
+            distrobox enter "$CONTAINER_NAME" -- bash -c "apt-mark showmanual" </dev/null 2>/dev/null | while read -r app; do
                 [ -z "$app" ] && continue
-                echo "API|LIST|Debian|$app|$app"
+                echo "API|LIST|Debian|$app|$app|Debian Local Sandbox"
             done
             ;;
         repo)
-            echo "API|REPO|Flatpak|Flathub Native OS Registry"
+            echo "API|REPO|Flatpak|Flathub Universal Linux Registry"
             ensure_container >/dev/null 2>&1
-            distrobox enter "$CONTAINER_NAME" -- bash -c "cat /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null | grep -v '^#' | grep '^deb'" 2>/dev/null | while read -r line; do
+            distrobox enter "$CONTAINER_NAME" -- bash -c "cat /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null | grep -v '^#' | grep -v '^$'" </dev/null 2>/dev/null | while read -r line; do
                 [ -z "$line" ] && continue
                 echo "API|REPO|Debian|$line"
             done
@@ -70,64 +67,36 @@ if [ "$GUI_MODE" = true ]; then
     exit 0
 fi
 
-# --- THE STANDARD CLI OUTPUT (Runs when you click Install or use Terminal) ---
+# --- STANDARD EXECUTION ENGINE ---
 case "$COMMAND" in
-    search)
-        if [ -z "$TARGET" ]; then echo "Usage: cert search <query>"; exit 1; fi
-        echo -e "\n🔍 Searching Certux Ecosystem for: $TARGET"
-        echo "=========================================================="
-        echo "📦 FLATPAK (Modern Sandboxed Apps):"
-        flatpak search "$TARGET" --columns=application,name,description | head -n 6
-        echo "=========================================================="
-        echo "📦 DEBIAN SUBSYSTEM (Legacy Apps):"
-        ensure_container
-        distrobox enter "$CONTAINER_NAME" -- bash -c "apt-cache search $TARGET | head -n 6"
-        echo "=========================================================="
+    update-sys)
+        echo "🔄 Requesting authorization for Core OS Upgrade..."
+        # pkexec triggers the native Linux UI Password Prompt!
+        pkexec rpm-ostree upgrade
+        echo "✅ Core OS Upgrade complete! Please reboot to apply."
         ;;
 
-    list)
-        echo "=========================================================="
-        echo "📦 SYSTEM HOST (OSTree Overlays)"
-        echo "=========================================================="
-        rpm-ostree status -b | grep "LocalPackages" || echo "No local host packages layered."
-        echo ""
-        echo "=========================================================="
-        echo "📦 FLATPAK (Modern App Ecosystem)"
-        echo "=========================================================="
-        flatpak list --app --columns=name,application
-        echo ""
-        echo "=========================================================="
-        echo "📦 DEBIAN SUBSYSTEM (certux-legacy-layer)"
-        echo "=========================================================="
-        ensure_container
-        distrobox enter "$CONTAINER_NAME" -- bash -c "apt-mark showmanual"
-        echo "=========================================================="
-        ;;
-
-    upgrade)
-        echo "🔄 Upgrading Certux Ecosystem..."
-        sudo rpm-ostree upgrade
+    update-apps)
+        echo "🔄 Upgrading App Ecosystems..."
+        echo "▶ Updating Flatpaks..."
         flatpak update -y
         if distrobox list | grep -q "$CONTAINER_NAME"; then
-            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y"
+            echo "▶ Updating Debian Subsystem..."
+            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y"
         fi
-        echo "✅ Universal Upgrade complete!"
+        echo "✅ App Ecosystems Fully Upgraded!"
         ;;
 
-    repo)
-        ensure_container
-        if [ "$TARGET" == "list" ]; then
-            echo -e "\n--- FLATPAK REPOSITORIES ---"
-            flatpak remotes
-            echo -e "\n--- DEBIAN SUBSYSTEM REPOSITORIES ---"
-            distrobox enter "$CONTAINER_NAME" -- bash -c "cat /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null | grep -v '^#'"
-        elif [ "$TARGET" == "add" ]; then
-            if [ -z "$EXTRA" ]; then echo "Usage: cert repo add <url>"; exit 1; fi
-            echo "➕ Adding repository: $EXTRA"
-            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-add-repository '$EXTRA' -y && sudo apt-get update"
-        else
-            echo "Usage: cert repo list OR cert repo add <url>"
+    launch)
+        SOURCE=$2
+        APP=$3
+        echo "🚀 Launching $APP from $SOURCE..."
+        if [ "$SOURCE" == "Flatpak" ]; then
+            flatpak run "$APP" &
+        elif [ "$SOURCE" == "Debian" ]; then
+            distrobox-enter -n "$CONTAINER_NAME" -- "$APP" &
         fi
+        echo "✅ Launch signal sent."
         ;;
 
     install)
@@ -157,33 +126,13 @@ case "$COMMAND" in
         else
             echo "📥 Installing web package: $TARGET"
             if ! distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $TARGET"; then
-                echo "❌ CRITICAL ERROR: Package '$TARGET' not found or failed to install."
-                echo "🔍 Did you mean one of these?"
-                distrobox enter "$CONTAINER_NAME" -- bash -c "apt-cache search $TARGET | head -n 5"
+                echo "❌ CRITICAL ERROR: Package '$TARGET' not found."
                 exit 1
             fi
             APP_NAME="$TARGET"
         fi
         
-        echo "🔎 Verifying binary exists in container..."
-        BINARY_EXISTS=false
-        if distrobox enter "$CONTAINER_NAME" -- bash -c "command -v $APP_NAME" > /dev/null 2>&1; then
-             BINARY_EXISTS=true
-             EXEC_CMD="$APP_NAME"
-        else
-             SHORT_NAME="${APP_NAME%%-*}"
-             if distrobox enter "$CONTAINER_NAME" -- bash -c "command -v $SHORT_NAME" > /dev/null 2>&1; then
-                 BINARY_EXISTS=true
-                 EXEC_CMD="$SHORT_NAME"
-             fi
-        fi
-
-        if [ "$BINARY_EXISTS" = false ]; then
-             echo "❌ CRITICAL ERROR: Binary for '$APP_NAME' could not be found. Aborting shortcut creation."
-             exit 1
-        fi
-
-        echo "🔗 Bridging $EXEC_CMD to your desktop..."
+        echo "🔗 Bridging $APP_NAME to your desktop..."
         EXPORT_SUCCESS=false
 
         if distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $APP_NAME --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1; then
@@ -195,7 +144,7 @@ case "$COMMAND" in
                 if distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $CLEAN_NAME --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1; then
                     EXPORT_SUCCESS=true
                 fi
-            elif distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $EXEC_CMD --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1; then
+            elif distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $APP_NAME --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1; then
                 EXPORT_SUCCESS=true
             fi
         fi
@@ -203,7 +152,7 @@ case "$COMMAND" in
         if [ "$EXPORT_SUCCESS" = false ]; then
             echo "⚠️ Standard bridging failed. Engaging Brute-Force Shortcut Generator..."
             BRUTE_DESKTOP="$REAL_DESKTOP_DIR/certux-bruteforce-${APP_NAME}.desktop"
-            echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=/usr/bin/distrobox-enter -n $CONTAINER_NAME -- $EXEC_CMD\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$BRUTE_DESKTOP"
+            echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=/usr/bin/distrobox-enter -n $CONTAINER_NAME -- $APP_NAME\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$BRUTE_DESKTOP"
         fi
 
         echo "✅ Successfully installed and bridged!"

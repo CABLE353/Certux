@@ -3,7 +3,6 @@ import gi
 import subprocess
 import sys
 import threading
-import re
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
@@ -21,7 +20,7 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         page_repos = self.create_repo_page()
         
         self.view_stack.add_titled(page_software, "software", "Store & Search")
-        self.view_stack.add_titled(page_installed, "installed", "System Management")
+        self.view_stack.add_titled(page_installed, "installed", "Installed Apps")
         self.view_stack.add_titled(page_repos, "repos", "Repositories")
 
         view_switcher = Adw.ViewSwitcherTitle(stack=self.view_stack)
@@ -33,36 +32,31 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         vbox.append(header)
         vbox.append(self.view_stack)
 
-        # --- VERBOSE TOGGLE BUTTON ---
+        # --- VERBOSE CONSOLE ---
         bottom_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         bottom_bar.set_margin_start(15)
         bottom_bar.set_margin_end(15)
         bottom_bar.set_margin_top(10)
         bottom_bar.set_margin_bottom(10)
-        bottom_bar.set_halign(Gtk.Align.END) # Aligns the button to the right
+        bottom_bar.set_halign(Gtk.Align.END)
 
         self.verbose_toggle = Gtk.ToggleButton(label="Verbose Output")
-        self.verbose_toggle.connect("toggled", self.on_verbose_toggled)
+        self.verbose_toggle.connect("toggled", lambda b: self.console_revealer.set_reveal_child(b.get_active()))
         bottom_bar.append(self.verbose_toggle)
 
-        # --- EMBEDDED SYSTEM CONSOLE (WITH REVEALER) ---
         self.console_revealer = Gtk.Revealer()
         self.console_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
-        self.console_revealer.set_reveal_child(False) # Hidden by default!
+        self.console_revealer.set_reveal_child(False)
 
-        console_inner_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        
+        console_inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         console_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         console_header.set_margin_start(15)
         console_header.set_margin_end(15)
-        console_header.set_margin_bottom(5)
-        
         c_label = Gtk.Label(label="<b>System Output Engine</b>", use_markup=True)
         c_label.set_hexpand(True)
         c_label.set_halign(Gtk.Align.START)
         clear_btn = Gtk.Button(label="Clear")
         clear_btn.connect("clicked", lambda b: self.console_buffer.set_text(""))
-        
         console_header.append(c_label)
         console_header.append(clear_btn)
         
@@ -80,37 +74,32 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         scroll.set_margin_end(15)
         scroll.set_margin_bottom(15)
 
-        console_inner_box.append(console_header)
-        console_inner_box.append(scroll)
+        console_inner.append(console_header)
+        console_inner.append(scroll)
+        self.console_revealer.set_child(console_inner)
         
-        # Add the inner box to the sliding revealer
-        self.console_revealer.set_child(console_inner_box)
-        
-        # Assemble the final layout
         vbox.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
         vbox.append(bottom_bar)
         vbox.append(self.console_revealer)
-        
         self.set_content(vbox)
 
         if len(sys.argv) > 1:
-            filepath = sys.argv[1]
-            self.run_cert_command(f"/usr/bin/cert install '{filepath}'")
+            self.run_cert_command(f"/usr/bin/cert install '{sys.argv[1]}'")
+            
+        # Auto-load installed apps and repos on startup
+        self.refresh_installed()
+        self.refresh_repos()
 
-    # --- UI EVENT HANDLERS ---
-    def on_verbose_toggled(self, button):
-        # Slides the console up when clicked, hides it when unchecked
-        self.console_revealer.set_reveal_child(button.get_active())
-
-    # --- STORE & SEARCH PAGE ---
+    # ==========================================
+    # TAB 1: SEARCH PAGE
+    # ==========================================
     def create_software_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
         box.set_margin_top(20)
         box.set_margin_start(40)
         box.set_margin_end(40)
 
-        title = Gtk.Label(label="<span size='xx-large' weight='bold'>App Discovery</span>", use_markup=True)
-        box.append(title)
+        box.append(Gtk.Label(label="<span size='xx-large' weight='bold'>App Discovery</span>", use_markup=True))
 
         search_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         search_box.set_halign(Gtk.Align.CENTER)
@@ -119,7 +108,6 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         search_btn = Gtk.Button(label="Search")
         search_btn.add_css_class("suggested-action")
         search_btn.connect("clicked", self.on_search_clicked)
-        
         search_box.append(self.search_entry)
         search_box.append(search_btn)
         box.append(search_box)
@@ -127,7 +115,6 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         self.results_list = Gtk.ListBox()
         self.results_list.add_css_class("boxed-list")
         self.results_list.set_selection_mode(Gtk.SelectionMode.NONE)
-        
         results_scroll = Gtk.ScrolledWindow()
         results_scroll.set_child(self.results_list)
         results_scroll.set_vexpand(True)
@@ -135,132 +122,183 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
 
         return box
 
-    # --- THE PARSER: CLI to GUI ---
     def on_search_clicked(self, button):
         query = self.search_entry.get_text()
         if not query: return
-        
-        while self.results_list.get_first_child() is not None:
-            self.results_list.remove(self.results_list.get_first_child())
-            
-        loading_row = Adw.ActionRow(title="Searching databases...")
-        self.results_list.append(loading_row)
+        self._clear_list(self.results_list)
+        self.results_list.append(Adw.ActionRow(title="Searching databases..."))
         
         def worker():
-            process = subprocess.Popen(f"/usr/bin/cert search '{query}'", shell=True, stdout=subprocess.PIPE, text=True)
+            process = subprocess.Popen(f"/usr/bin/cert --gui search '{query}'", shell=True, stdout=subprocess.PIPE, text=True)
             output, _ = process.communicate()
             GLib.idle_add(self.populate_search_results, output)
-            
         threading.Thread(target=worker, daemon=True).start()
 
     def populate_search_results(self, output):
-        while self.results_list.get_first_child() is not None:
-            self.results_list.remove(self.results_list.get_first_child())
-
-        current_source = None
+        self._clear_list(self.results_list)
+        has_results = False
         for line in output.split('\n'):
-            line = line.strip()
-            if not line or line.startswith("===") or line.startswith("🔍"):
-                continue
-            
-            if "FLATPAK" in line:
-                current_source = "Flatpak"
-                continue
-            elif "DEBIAN" in line:
-                current_source = "Debian"
-                continue
-                
-            install_target = ""
-            display_name = ""
-            desc = ""
-            
-            if current_source == "Flatpak":
-                parts = re.split(r'\t+', line)
-                if len(parts) >= 3:
-                    install_target = parts[0]
-                    display_name = parts[1]
-                    desc = parts[2]
-                elif len(parts) == 2:
-                    install_target = parts[0]
-                    display_name = parts[0]
-                    desc = parts[1]
-            elif current_source == "Debian":
-                if " - " in line:
-                    parts = line.split(" - ", 1)
-                    install_target = parts[0].strip()
-                    display_name = install_target
-                    desc = parts[1].strip()
+            if line.startswith("API|SEARCH|"):
+                has_results = True
+                parts = line.split('|')
+                if len(parts) >= 7:
+                    source, app_id, name, desc, repo = parts[2], parts[3], parts[4], parts[5], parts[6]
+                    
+                    row = Adw.ActionRow(title=f"<b>{name}</b>  <span foreground='gray' size='small'>({source})</span>", subtitle=desc)
+                    row.set_title_lines(1)
+                    row.get_title().set_use_markup(True)
+                    
+                    # Custom Box for Button + Repo Label
+                    btn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                    btn_box.set_valign(Gtk.Align.CENTER)
+                    
+                    btn = Gtk.Button(label="Install")
+                    btn.add_css_class("suggested-action")
+                    btn.add_css_class("pill")
+                    btn.connect("clicked", lambda b, pkg=app_id: self.run_cert_command(f"/usr/bin/cert install '{pkg}'"))
+                    
+                    repo_label = Gtk.Label(label=f"<span size='x-small' foreground='gray'>{repo}</span>", use_markup=True)
+                    
+                    btn_box.append(btn)
+                    btn_box.append(repo_label)
+                    row.add_suffix(btn_box)
+                    self.results_list.append(row)
+                    
+        if not has_results:
+            self.results_list.append(Adw.ActionRow(title="No results found."))
 
-            if install_target:
-                row = Adw.ActionRow(title=f"{display_name}  <span foreground='gray' size='small'>({current_source})</span>", subtitle=desc)
-                row.set_title_lines(1)
-                row.set_subtitle_lines(2)
-                row.get_title().set_use_markup(True)
-                
-                btn = Gtk.Button(label="Install")
-                btn.set_valign(Gtk.Align.CENTER)
-                btn.add_css_class("pill")
-                btn.connect("clicked", lambda b, pkg=install_target: self.run_cert_command(f"/usr/bin/cert install '{pkg}'"))
-                
-                row.add_suffix(btn)
-                self.results_list.append(row)
-
-    # --- SYSTEM & REPOS PAGES ---
+    # ==========================================
+    # TAB 2: INSTALLED PAGE
+    # ==========================================
     def create_installed_page(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
-        box.set_margin_top(30)
-        box.set_halign(Gtk.Align.CENTER)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        box.set_margin_top(20)
+        box.set_margin_start(40)
+        box.set_margin_end(40)
 
-        box.append(Gtk.Label(label="<span size='x-large' weight='bold'>System Operations</span>", use_markup=True))
+        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        header_box.append(Gtk.Label(label="<span size='x-large' weight='bold'>Installed Software</span>", use_markup=True, hexpand=True, halign=Gtk.Align.START))
         
-        up_btn = Gtk.Button(label="Run Universal System Upgrade")
-        up_btn.add_css_class("suggested-action")
+        up_btn = Gtk.Button(label="Upgrade OS")
         up_btn.connect("clicked", lambda b: self.run_cert_command("/usr/bin/cert upgrade"))
-        box.append(up_btn)
-        
-        list_btn = Gtk.Button(label="List All Installed Software")
-        list_btn.connect("clicked", lambda b: self.run_cert_command("/usr/bin/cert list"))
-        box.append(list_btn)
+        ref_btn = Gtk.Button(label="Refresh List")
+        ref_btn.connect("clicked", lambda b: self.refresh_installed())
+        header_box.append(up_btn)
+        header_box.append(ref_btn)
+        header_box.set_spacing(10)
+        box.append(header_box)
 
-        remove_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        self.rem_entry = Gtk.Entry(placeholder_text="Exact package name to remove")
-        self.rem_entry.set_width_chars(30)
-        rem_btn = Gtk.Button(label="Remove App")
-        rem_btn.add_css_class("destructive-action")
-        rem_btn.connect("clicked", lambda b: self.run_cert_command(f"/usr/bin/cert remove '{self.rem_entry.get_text()}'"))
-        remove_box.append(self.rem_entry)
-        remove_box.append(rem_btn)
-        box.append(remove_box)
+        self.installed_list = Gtk.ListBox()
+        self.installed_list.add_css_class("boxed-list")
+        self.installed_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        inst_scroll = Gtk.ScrolledWindow()
+        inst_scroll.set_child(self.installed_list)
+        inst_scroll.set_vexpand(True)
+        box.append(inst_scroll)
 
         return box
 
+    def refresh_installed(self):
+        self._clear_list(self.installed_list)
+        self.installed_list.append(Adw.ActionRow(title="Scanning installed apps..."))
+        
+        def worker():
+            process = subprocess.Popen("/usr/bin/cert --gui list", shell=True, stdout=subprocess.PIPE, text=True)
+            output, _ = process.communicate()
+            GLib.idle_add(self.populate_installed, output)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def populate_installed(self, output):
+        self._clear_list(self.installed_list)
+        for line in output.split('\n'):
+            if line.startswith("API|LIST|"):
+                parts = line.split('|')
+                if len(parts) >= 5:
+                    source, app_id, name = parts[2], parts[3], parts[4]
+                    
+                    row = Adw.ActionRow(title=f"<b>{name}</b>", subtitle=f"ID: {app_id}")
+                    row.get_title().set_use_markup(True)
+                    
+                    btn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                    btn_box.set_valign(Gtk.Align.CENTER)
+                    
+                    btn = Gtk.Button(label="Remove")
+                    btn.add_css_class("destructive-action")
+                    btn.add_css_class("pill")
+                    btn.connect("clicked", lambda b, pkg=app_id: self.run_cert_command(f"/usr/bin/cert remove '{pkg}'"))
+                    
+                    repo_label = Gtk.Label(label=f"<span size='x-small' foreground='gray'>{source} Subsystem</span>", use_markup=True)
+                    
+                    btn_box.append(btn)
+                    btn_box.append(repo_label)
+                    row.add_suffix(btn_box)
+                    self.installed_list.append(row)
+
+    # ==========================================
+    # TAB 3: REPOS PAGE
+    # ==========================================
     def create_repo_page(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
-        box.set_margin_top(30)
-        box.set_halign(Gtk.Align.CENTER)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        box.set_margin_top(20)
+        box.set_margin_start(40)
+        box.set_margin_end(40)
 
         box.append(Gtk.Label(label="<span size='x-large' weight='bold'>Repository Management</span>", use_markup=True))
 
-        list_btn = Gtk.Button(label="List Active Repositories")
-        list_btn.connect("clicked", lambda b: self.run_cert_command("/usr/bin/cert repo list"))
-        box.append(list_btn)
-
         add_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        add_box.set_halign(Gtk.Align.CENTER)
         self.repo_entry = Gtk.Entry(placeholder_text="ppa:name/repo OR deb http://...")
-        self.repo_entry.set_width_chars(30)
+        self.repo_entry.set_width_chars(40)
         add_btn = Gtk.Button(label="Add Debian Repo")
         add_btn.connect("clicked", lambda b: self.run_cert_command(f"/usr/bin/cert repo add '{self.repo_entry.get_text()}'"))
         add_box.append(self.repo_entry)
         add_box.append(add_btn)
         box.append(add_box)
 
+        self.repo_list = Gtk.ListBox()
+        self.repo_list.add_css_class("boxed-list")
+        self.repo_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        repo_scroll = Gtk.ScrolledWindow()
+        repo_scroll.set_child(self.repo_list)
+        repo_scroll.set_vexpand(True)
+        box.append(repo_scroll)
+
         return box
 
-    # --- BACKEND EXECUTION ---
-    def run_cert_command(self, command):
-        # We optionally force the toggle open when a command runs so they see the logs!
-        self.verbose_toggle.set_active(True)
+    def refresh_repos(self):
+        self._clear_list(self.repo_list)
+        def worker():
+            process = subprocess.Popen("/usr/bin/cert --gui repo", shell=True, stdout=subprocess.PIPE, text=True)
+            output, _ = process.communicate()
+            GLib.idle_add(self.populate_repos, output)
+        threading.Thread(target=worker, daemon=True).start()
 
+    def populate_repos(self, output):
+        self._clear_list(self.repo_list)
+        for line in output.split('\n'):
+            if line.startswith("API|REPO|"):
+                parts = line.split('|')
+                if len(parts) >= 4:
+                    source, url = parts[2], parts[3]
+                    row = Adw.ActionRow(title=url, subtitle=f"{source} Repository")
+                    row.set_title_lines(1)
+                    
+                    # Visual pill showing it is Active
+                    status = Gtk.Label(label="<span size='small' foreground='green'>● Active</span>", use_markup=True)
+                    status.set_valign(Gtk.Align.CENTER)
+                    row.add_suffix(status)
+                    
+                    self.repo_list.append(row)
+
+    # ==========================================
+    # UTILS & EXECUTION
+    # ==========================================
+    def _clear_list(self, listbox):
+        while listbox.get_first_child() is not None:
+            listbox.remove(listbox.get_first_child())
+
+    def run_cert_command(self, command):
+        self.verbose_toggle.set_active(True)
         self.console_buffer.insert(self.console_buffer.get_end_iter(), f"\n🚀 Executing: {command}\n")
         self.scroll_to_bottom()
         
@@ -268,12 +306,15 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
             process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             for line in process.stdout:
                 GLib.idle_add(self.append_console, line)
-            
             process.wait()
             if process.returncode == 0:
                 GLib.idle_add(self.append_console, "\n✅ Task Finished Successfully.\n")
             else:
                 GLib.idle_add(self.append_console, f"\n❌ Task Failed (Error Code: {process.returncode}). Check output above.\n")
+                
+            # If they just installed or removed something, refresh the Installed tab automatically
+            if "install" in command or "remove" in command:
+                GLib.idle_add(self.refresh_installed)
 
         threading.Thread(target=worker, daemon=True).start()
 

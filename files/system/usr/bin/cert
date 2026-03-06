@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-# Certux Universal Engine v7.4 - "The Complete Foundation"
+# Certux Universal Engine v7.5 - "The API Edition"
+
+# --- THE HIDDEN GUI API INTERCEPTOR ---
+GUI_MODE=false
+if [ "$1" == "--gui" ]; then
+    GUI_MODE=true
+    shift
+fi
 
 COMMAND=$1
 TARGET=$2
@@ -10,18 +17,60 @@ REAL_DESKTOP_DIR="$HOME/.local/share/applications"
 
 ensure_container() {
     if ! distrobox list | grep -q "$CONTAINER_NAME"; then
-        echo "📦 Initializing Certux Subsystem..."
+        if [ "$GUI_MODE" = false ]; then echo "📦 Initializing Certux Subsystem..."; fi
         distrobox create --name "$CONTAINER_NAME" --image "$BASE_IMAGE" --yes > /dev/null 2>&1
         distrobox enter "$CONTAINER_NAME" -- bash -c "sudo dpkg --add-architecture i386 && sudo apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common xdg-utils"
     fi
 }
 
 native_integration_cleanup() {
-    echo "🧹 Applying Native OS Visual Integration..."
+    if [ "$GUI_MODE" = false ]; then echo "🧹 Applying Native OS Visual Integration..."; fi
     sed -i "s/ (on ${CONTAINER_NAME})//g" "$REAL_DESKTOP_DIR/"*.desktop 2>/dev/null || true
     chmod +x "$REAL_DESKTOP_DIR/"*.desktop 2>/dev/null || true
 }
 
+# --- THE MACHINE-READABLE GUI OUTPUT ---
+if [ "$GUI_MODE" = true ]; then
+    case "$COMMAND" in
+        search)
+            # Fetch Flatpaks: Format -> API|SEARCH|Flatpak|AppID|Name|Desc|Repo
+            flatpak search "$TARGET" --columns=application,name,description,remotes 2>/dev/null | tail -n +2 | head -n 8 | while IFS=$'\t' read -r app name desc remote; do
+                [ -z "$app" ] && continue
+                echo "API|SEARCH|Flatpak|$app|$name|$desc|$remote"
+            done
+            # Fetch Debian: Format -> API|SEARCH|Debian|AppID|Name|Desc|Repo
+            ensure_container >/dev/null 2>&1
+            distrobox enter "$CONTAINER_NAME" -- bash -c "apt-cache search '$TARGET' | head -n 8" 2>/dev/null | while read -r line; do
+                [ -z "$line" ] && continue
+                app="${line%% - *}"
+                desc="${line#* - }"
+                echo "API|SEARCH|Debian|$app|$app|$desc|Debian APT"
+            done
+            ;;
+        list)
+            flatpak list --app --columns=application,name 2>/dev/null | tail -n +2 | while IFS=$'\t' read -r app name; do
+                [ -z "$app" ] && continue
+                echo "API|LIST|Flatpak|$app|$name"
+            done
+            ensure_container >/dev/null 2>&1
+            distrobox enter "$CONTAINER_NAME" -- bash -c "apt-mark showmanual" 2>/dev/null | while read -r app; do
+                [ -z "$app" ] && continue
+                echo "API|LIST|Debian|$app|$app"
+            done
+            ;;
+        repo)
+            echo "API|REPO|Flatpak|Flathub Native OS Registry"
+            ensure_container >/dev/null 2>&1
+            distrobox enter "$CONTAINER_NAME" -- bash -c "cat /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null | grep -v '^#' | grep '^deb'" 2>/dev/null | while read -r line; do
+                [ -z "$line" ] && continue
+                echo "API|REPO|Debian|$line"
+            done
+            ;;
+    esac
+    exit 0
+fi
+
+# --- THE STANDARD CLI OUTPUT (Runs when you click Install or use Terminal) ---
 case "$COMMAND" in
     search)
         if [ -z "$TARGET" ]; then echo "Usage: cert search <query>"; exit 1; fi
@@ -169,16 +218,5 @@ case "$COMMAND" in
         rm -f "$REAL_DESKTOP_DIR/certux-bruteforce-${TARGET}.desktop" 2>/dev/null || true
         rm -f "$REAL_DESKTOP_DIR/${CONTAINER_NAME}-${TARGET}.desktop" 2>/dev/null || true
         echo "✅ Removed $TARGET."
-        ;;
-        
-    *)
-        echo -e "Certux Unified Commands:"
-        echo "  cert search <query>         - Search all repositories"
-        echo "  cert install <pkg/file>     - Install Web, .deb, or .AppImage"
-        echo "  cert remove <pkg>           - Remove an app"
-        echo "  cert upgrade                - Update entire OS"
-        echo "  cert list                   - List installed apps/packages"
-        echo "  cert repo list              - List all active repositories"
-        echo "  cert repo add <url>         - Add a Debian PPA or repo URL"
         ;;
 esac

@@ -159,7 +159,7 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
                 btn = Gtk.Button(label="Install")
                 btn.add_css_class("suggested-action")
                 btn.add_css_class("pill")
-                # THE FIX: We now explicitly pass the SOURCE (Flatpak or Debian) to the backend router
+                # EXPLICT ROUTING INJECTED HERE
                 btn.connect("clicked", lambda b, s=source, pkg=app_id: self.run_cert_command(f"/usr/bin/cert install {s} '{pkg}'"))
                 
                 repo_label = Gtk.Label(label=f"<span size='x-small' foreground='gray'>Repo: {repo}</span>", use_markup=True)
@@ -243,15 +243,16 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
                 action_box.set_margin_top(10)
                 action_box.set_margin_bottom(10)
                 
+                # Green Open Button
                 open_btn = Gtk.Button(label="Open")
                 open_btn.add_css_class("suggested-action")
                 open_btn.add_css_class("pill")
                 open_btn.connect("clicked", lambda b, s=source, pkg=app_id: self.run_cert_command(f"/usr/bin/cert launch {s} '{pkg}'"))
                 
+                # Red Remove Button
                 rem_btn = Gtk.Button(label="Remove")
                 rem_btn.add_css_class("destructive-action")
                 rem_btn.add_css_class("pill")
-                # THE FIX: Explicitly passing SOURCE for removal as well
                 rem_btn.connect("clicked", lambda b, s=source, pkg=app_id: self.run_cert_command(f"/usr/bin/cert remove {s} '{pkg}'"))
                 
                 action_box.append(open_btn)

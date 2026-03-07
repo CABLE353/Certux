@@ -40,23 +40,21 @@ native_integration_cleanup() {
     chmod +x "$REAL_DESKTOP_DIR/"*.desktop 2>/dev/null || true
 }
 
-# --- THE MACHINE-READABLE GUI OUTPUT ---
+# --- THE MACHINE-READABLE GUI OUTPUT (v8.5) ---
+API_LOG="/tmp/certux_api"
 if [ "$GUI_MODE" = true ]; then
+    > "$API_LOG" # Clear previous API data
     case "$COMMAND" in
         search)
-            flatpak search "$TARGET" --columns=application,name,description,remotes 2>/dev/null | awk -F'\t' 'NR>1 {print "API|SEARCH|Flatpak|"$1"|"$2"|"$3"|"$4}' | head -n 8
+            # Send data to the hidden file, not the terminal
+            flatpak search "$TARGET" --columns=application,name,description,remotes 2>/dev/null | awk -F'\t' 'NR>1 {print "API|SEARCH|Flatpak|"$1"|"$2"|"$3"|"$4}' >> "$API_LOG" &
             ensure_container >/dev/null 2>&1
-            distrobox-enter -n "$CONTAINER_NAME" -- apt-cache search "$TARGET" 2>/dev/null | head -n 8 | awk -F' - ' '{print "API|SEARCH|Debian|"$1"|"$1"|"$2"|Debian Sandbox"}'
+            distrobox-enter -n "$CONTAINER_NAME" -- apt-cache search "$TARGET" 2>/dev/null | head -n 15 | awk -F' - ' -v target="$TARGET" '{print "API|SEARCH|Debian|"$1"|"$1"|"$2"|Debian Sandbox"}' >> "$API_LOG"
             ;;
         list)
-            flatpak list --app --columns=application,name,origin 2>/dev/null | awk -F'\t' 'NR>1 {print "API|LIST|Flatpak|"$1"|"$2"|"$3}'
+            flatpak list --app --columns=application,name,origin 2>/dev/null | awk -F'\t' 'NR>1 {print "API|LIST|Flatpak|"$1"|"$2"|"$3}' >> "$API_LOG"
             ensure_container >/dev/null 2>&1
-            distrobox-enter -n "$CONTAINER_NAME" -- apt-mark showmanual 2>/dev/null | awk '{print "API|LIST|Debian|"$1"|"$1"|Debian Sandbox"}'
-            ;;
-        repo)
-            echo "API|REPO|Flatpak|Flathub Universal Linux Registry"
-            ensure_container >/dev/null 2>&1
-            distrobox-enter -n "$CONTAINER_NAME" -- bash -c "grep -E '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null" | awk '{print "API|REPO|Debian|"$0}'
+            distrobox-enter -n "$CONTAINER_NAME" -- apt-mark showmanual 2>/dev/null | awk '{print "API|LIST|Debian|"$1"|"$1"|Debian Sandbox"}' >> "$API_LOG"
             ;;
     esac
     exit 0

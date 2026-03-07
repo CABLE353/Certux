@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Certux Universal Engine v8.3 - "The Global Router"
+# Certux Universal Engine v8.4 - "Decisive Flatpak Routing"
 
 GUI_MODE=false
 if [ "$1" == "--gui" ]; then
@@ -110,7 +110,8 @@ case "$COMMAND" in
         # --- FLATPAK ROUTING ---
         if [ "$SOURCE" == "Flatpak" ] || [[ "$SOURCE" == "Auto" && "$TARGET" == *.*.* && "$TARGET" != *.deb ]]; then
             echo "📥 Installing Native Flatpak: $TARGET..."
-            if flatpak install -y "$TARGET"; then
+            # THE FIX: Added --system to bypass the user/system duplicate prompt
+            if flatpak install --system -y "$TARGET"; then
                 echo "✅ Flatpak $TARGET successfully installed!"
                 exit 0
             else
@@ -167,13 +168,15 @@ case "$COMMAND" in
     remove)
         if [ -z "$TARGET" ]; then echo "Usage: cert remove [Flatpak|Debian] <package>"; exit 1; fi
 
+        # --- FLATPAK REMOVAL ---
         if [ "$SOURCE" == "Flatpak" ] || flatpak list --app --columns=application | grep -q "^${TARGET}$"; then
             echo "🗑️ Removing Flatpak: $TARGET..."
-            flatpak uninstall -y "$TARGET"
+            flatpak uninstall --system -y "$TARGET"
             echo "✅ Removed Flatpak $TARGET."
             exit 0
         fi
 
+        # --- DEBIAN REMOVAL ---
         ensure_container
         echo "🗑️ Removing Debian package: $TARGET..."
         distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get remove -y $TARGET"

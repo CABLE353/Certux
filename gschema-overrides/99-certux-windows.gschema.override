@@ -1,0 +1,7 @@
+[org.gnome.desktop.wm.preferences]
+# This injects the Minimize and Maximize buttons next to the Close button
+button-layout='appmenu:minimize,maximize,close'
+
+[org.gnome.shell]
+# This forces GNOME to turn your new taskbar and system tray on by default
+enabled-extensions=['dash-to-panel@jderose9.github.com', 'appindicatorsupport@rgcjonas.gmail.com']

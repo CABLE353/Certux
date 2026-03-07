@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Certux Universal Engine v8.1 - "Bulletproof API & Awk Parsers"
+# Certux Universal Engine v8.3 - "The Global Router"
 
 GUI_MODE=false
 if [ "$1" == "--gui" ]; then
@@ -8,8 +8,20 @@ if [ "$1" == "--gui" ]; then
 fi
 
 COMMAND=$1
-TARGET=$2
-EXTRA=$3
+shift
+
+# --- THE GLOBAL TRAFFIC COP ---
+SOURCE="Auto"
+if [ "$COMMAND" == "install" ] || [ "$COMMAND" == "remove" ] || [ "$COMMAND" == "launch" ]; then
+    if [ "$1" == "Flatpak" ] || [ "$1" == "Debian" ]; then
+        SOURCE=$1
+        shift
+    fi
+fi
+
+TARGET=$1
+EXTRA=$2
+
 CONTAINER_NAME="certux-legacy-layer"
 BASE_IMAGE="debian:latest"
 REAL_DESKTOP_DIR="$HOME/.local/share/applications"
@@ -28,22 +40,16 @@ native_integration_cleanup() {
     chmod +x "$REAL_DESKTOP_DIR/"*.desktop 2>/dev/null || true
 }
 
-# --- THE MACHINE-READABLE GUI OUTPUT (AWK Engine) ---
+# --- THE MACHINE-READABLE GUI OUTPUT ---
 if [ "$GUI_MODE" = true ]; then
     case "$COMMAND" in
         search)
-            # Flatpak awk parser (NR>1 skips the header)
             flatpak search "$TARGET" --columns=application,name,description,remotes 2>/dev/null | awk -F'\t' 'NR>1 {print "API|SEARCH|Flatpak|"$1"|"$2"|"$3"|"$4}' | head -n 8
-            
-            # Debian awk parser
             ensure_container >/dev/null 2>&1
             distrobox-enter -n "$CONTAINER_NAME" -- apt-cache search "$TARGET" 2>/dev/null | head -n 8 | awk -F' - ' '{print "API|SEARCH|Debian|"$1"|"$1"|"$2"|Debian Sandbox"}'
             ;;
         list)
-            # Flatpak awk parser
             flatpak list --app --columns=application,name,origin 2>/dev/null | awk -F'\t' 'NR>1 {print "API|LIST|Flatpak|"$1"|"$2"|"$3}'
-            
-            # Debian awk parser
             ensure_container >/dev/null 2>&1
             distrobox-enter -n "$CONTAINER_NAME" -- apt-mark showmanual 2>/dev/null | awk '{print "API|LIST|Debian|"$1"|"$1"|Debian Sandbox"}'
             ;;
@@ -76,19 +82,17 @@ case "$COMMAND" in
         ;;
 
     launch)
-        SOURCE=$2
-        APP=$3
-        echo "🚀 Launching $APP from $SOURCE..."
+        echo "🚀 Launching $TARGET from $SOURCE..."
         if [ "$SOURCE" == "Flatpak" ]; then
-            flatpak run "$APP" &
+            flatpak run "$TARGET" &
         elif [ "$SOURCE" == "Debian" ]; then
-            distrobox-enter -n "$CONTAINER_NAME" -- "$APP" &
+            distrobox-enter -n "$CONTAINER_NAME" -- "$TARGET" &
         fi
         echo "✅ Launch signal sent."
         ;;
 
     install)
-        if [ -z "$TARGET" ]; then echo "Usage: cert install <package/file>"; exit 1; fi
+        if [ -z "$TARGET" ]; then echo "Usage: cert install [Flatpak|Debian] <package/file>"; exit 1; fi
         mkdir -p "$REAL_DESKTOP_DIR"
         
         if [[ "$TARGET" == *.AppImage || "$TARGET" == *.appimage ]]; then
@@ -103,6 +107,19 @@ case "$COMMAND" in
             exit 0
         fi
 
+        # --- FLATPAK ROUTING ---
+        if [ "$SOURCE" == "Flatpak" ] || [[ "$SOURCE" == "Auto" && "$TARGET" == *.*.* && "$TARGET" != *.deb ]]; then
+            echo "📥 Installing Native Flatpak: $TARGET..."
+            if flatpak install -y "$TARGET"; then
+                echo "✅ Flatpak $TARGET successfully installed!"
+                exit 0
+            else
+                echo "❌ CRITICAL ERROR: Flatpak installation failed."
+                exit 1
+            fi
+        fi
+
+        # --- DEBIAN ROUTING ---
         ensure_container
         if [[ -f "$TARGET" && "$TARGET" == *.deb ]]; then
             FILE_PATH=$(realpath "$TARGET")
@@ -112,7 +129,7 @@ case "$COMMAND" in
             fi
             APP_NAME=$(distrobox enter "$CONTAINER_NAME" -- bash -c "dpkg-deb -f '$FILE_PATH' Package")
         else
-            echo "📥 Installing web package: $TARGET"
+            echo "📥 Installing Debian package: $TARGET"
             if ! distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $TARGET"; then
                 echo "❌ CRITICAL ERROR: Package '$TARGET' not found."
                 exit 1
@@ -132,7 +149,7 @@ case "$COMMAND" in
                 if distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $CLEAN_NAME --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1; then
                     EXPORT_SUCCESS=true
                 fi
-            elif distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $APP_NAME --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1; then
+            elif distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $TARGET --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1; then
                 EXPORT_SUCCESS=true
             fi
         fi
@@ -140,7 +157,7 @@ case "$COMMAND" in
         if [ "$EXPORT_SUCCESS" = false ]; then
             echo "⚠️ Standard bridging failed. Engaging Brute-Force Shortcut Generator..."
             BRUTE_DESKTOP="$REAL_DESKTOP_DIR/certux-bruteforce-${APP_NAME}.desktop"
-            echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=/usr/bin/distrobox-enter -n $CONTAINER_NAME -- $APP_NAME\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$BRUTE_DESKTOP"
+            echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=/usr/bin/distrobox-enter -n $CONTAINER_NAME -- $TARGET\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$BRUTE_DESKTOP"
         fi
 
         echo "✅ Successfully installed and bridged!"
@@ -148,12 +165,20 @@ case "$COMMAND" in
         ;;
 
     remove)
+        if [ -z "$TARGET" ]; then echo "Usage: cert remove [Flatpak|Debian] <package>"; exit 1; fi
+
+        if [ "$SOURCE" == "Flatpak" ] || flatpak list --app --columns=application | grep -q "^${TARGET}$"; then
+            echo "🗑️ Removing Flatpak: $TARGET..."
+            flatpak uninstall -y "$TARGET"
+            echo "✅ Removed Flatpak $TARGET."
+            exit 0
+        fi
+
         ensure_container
-        if [ -z "$TARGET" ]; then echo "Usage: cert remove <package>"; exit 1; fi
-        echo "🗑️ Removing $TARGET..."
+        echo "🗑️ Removing Debian package: $TARGET..."
         distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get remove -y $TARGET"
         rm -f "$REAL_DESKTOP_DIR/certux-bruteforce-${TARGET}.desktop" 2>/dev/null || true
         rm -f "$REAL_DESKTOP_DIR/${CONTAINER_NAME}-${TARGET}.desktop" 2>/dev/null || true
-        echo "✅ Removed $TARGET."
+        echo "✅ Removed Debian package $TARGET."
         ;;
 esac

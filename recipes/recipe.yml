@@ -31,6 +31,7 @@ modules:
         - starship
         - distrobox
         - python3-gobject
+        - gnome-extensions-app
     remove:
       packages:
         - firefox

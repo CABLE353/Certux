@@ -1,190 +1,384 @@
-#!/usr/bin/env bash
-# Certux Universal Engine v8.2 - "Intelligent App Routing"
+#!/usr/bin/env python3
+import gi
+import subprocess
+import sys
+import threading
 
-GUI_MODE=false
-if [ "$1" == "--gui" ]; then
-    GUI_MODE=true
-    shift
-fi
+gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
+from gi.repository import Gtk, Adw, GLib
 
-COMMAND=$1
-TARGET=$2
-EXTRA=$3
-CONTAINER_NAME="certux-legacy-layer"
-BASE_IMAGE="debian:latest"
-REAL_DESKTOP_DIR="$HOME/.local/share/applications"
+class CertuxSoftwareWindow(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Certux Software Center")
+        self.set_default_size(950, 800)
 
-ensure_container() {
-    if ! distrobox list | grep -q "$CONTAINER_NAME"; then
-        if [ "$GUI_MODE" = false ]; then echo "📦 Initializing Certux Subsystem..."; fi
-        distrobox create --name "$CONTAINER_NAME" --image "$BASE_IMAGE" --yes > /dev/null 2>&1
-        distrobox enter "$CONTAINER_NAME" -- bash -c "sudo dpkg --add-architecture i386 && sudo apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common xdg-utils"
-    fi
-}
-
-native_integration_cleanup() {
-    if [ "$GUI_MODE" = false ]; then echo "🧹 Applying Native OS Visual Integration..."; fi
-    sed -i "s/ (on ${CONTAINER_NAME})//g" "$REAL_DESKTOP_DIR/"*.desktop 2>/dev/null || true
-    chmod +x "$REAL_DESKTOP_DIR/"*.desktop 2>/dev/null || true
-}
-
-# --- THE MACHINE-READABLE GUI OUTPUT ---
-if [ "$GUI_MODE" = true ]; then
-    case "$COMMAND" in
-        search)
-            flatpak search "$TARGET" --columns=application,name,description,remotes 2>/dev/null | awk -F'\t' 'NR>1 {print "API|SEARCH|Flatpak|"$1"|"$2"|"$3"|"$4}' | head -n 8
-            ensure_container >/dev/null 2>&1
-            distrobox-enter -n "$CONTAINER_NAME" -- apt-cache search "$TARGET" 2>/dev/null | head -n 8 | awk -F' - ' '{print "API|SEARCH|Debian|"$1"|"$1"|"$2"|Debian Sandbox"}'
-            ;;
-        list)
-            flatpak list --app --columns=application,name,origin 2>/dev/null | awk -F'\t' 'NR>1 {print "API|LIST|Flatpak|"$1"|"$2"|"$3}'
-            ensure_container >/dev/null 2>&1
-            distrobox-enter -n "$CONTAINER_NAME" -- apt-mark showmanual 2>/dev/null | awk '{print "API|LIST|Debian|"$1"|"$1"|Debian Sandbox"}'
-            ;;
-        repo)
-            echo "API|REPO|Flatpak|Flathub Universal Linux Registry"
-            ensure_container >/dev/null 2>&1
-            distrobox-enter -n "$CONTAINER_NAME" -- bash -c "grep -E '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null" | awk '{print "API|REPO|Debian|"$0}'
-            ;;
-    esac
-    exit 0
-fi
-
-# --- STANDARD EXECUTION ENGINE ---
-case "$COMMAND" in
-    update-sys)
-        echo "🔄 Requesting authorization for Core OS Upgrade..."
-        pkexec rpm-ostree upgrade
-        echo "✅ Core OS Upgrade complete! Please reboot to apply."
-        ;;
-
-    update-apps)
-        echo "🔄 Upgrading App Ecosystems..."
-        echo "▶ Updating Flatpaks..."
-        flatpak update -y
-        if distrobox list | grep -q "$CONTAINER_NAME"; then
-            echo "▶ Updating Debian Subsystem..."
-            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y"
-        fi
-        echo "✅ App Ecosystems Fully Upgraded!"
-        ;;
-
-    launch)
-        SOURCE=$2
-        APP=$3
-        echo "🚀 Launching $APP from $SOURCE..."
-        if [ "$SOURCE" == "Flatpak" ]; then
-            flatpak run "$APP" &
-        elif [ "$SOURCE" == "Debian" ]; then
-            distrobox-enter -n "$CONTAINER_NAME" -- "$APP" &
-        fi
-        echo "✅ Launch signal sent."
-        ;;
-
-    install)
-        # THE TRAFFIC COP
-        SOURCE="Auto"
-        if [ "$TARGET" == "Flatpak" ] || [ "$TARGET" == "Debian" ]; then
-            SOURCE="$TARGET"
-            TARGET="$EXTRA"
-        fi
+        self.view_stack = Adw.ViewStack()
         
-        if [ -z "$TARGET" ]; then echo "Usage: cert install [Flatpak|Debian] <package/file>"; exit 1; fi
-        mkdir -p "$REAL_DESKTOP_DIR"
+        page_software = self.create_software_page()
+        page_installed = self.create_installed_page()
+        page_repos = self.create_repo_page()
         
-        # --- APPIMAGE ROUTING ---
-        if [[ "$TARGET" == *.AppImage || "$TARGET" == *.appimage ]]; then
-            BASENAME=$(basename "$TARGET")
-            APP_NAME="${BASENAME%.*}"
-            echo "📥 Securing AppImage..."
-            cp "$TARGET" "$REAL_DESKTOP_DIR/$BASENAME"
-            chmod +x "$REAL_DESKTOP_DIR/$BASENAME"
-            echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=$REAL_DESKTOP_DIR/$BASENAME\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$REAL_DESKTOP_DIR/certux-${APP_NAME}.desktop"
-            echo "✅ AppImage installed!"
-            native_integration_cleanup
-            exit 0
-        fi
+        self.view_stack.add_titled(page_software, "software", "Store & Search")
+        self.view_stack.add_titled(page_installed, "installed", "Installed Apps")
+        self.view_stack.add_titled(page_repos, "repos", "Repositories")
 
-        # --- FLATPAK ROUTING ---
-        if [ "$SOURCE" == "Flatpak" ] || [[ "$SOURCE" == "Auto" && "$TARGET" == *.*.* && "$TARGET" != *.deb ]]; then
-            echo "📥 Installing Native Flatpak: $TARGET..."
-            if flatpak install -y "$TARGET"; then
-                echo "✅ Flatpak $TARGET successfully installed!"
-                exit 0
-            else
-                echo "❌ CRITICAL ERROR: Flatpak installation failed."
-                exit 1
-            fi
-        fi
+        view_switcher = Adw.ViewSwitcherTitle(stack=self.view_stack)
+        header = Adw.HeaderBar()
+        header.set_title_widget(view_switcher)
 
-        # --- DEBIAN ROUTING & AUTO-HEALER ---
-        ensure_container
-        if [[ -f "$TARGET" && "$TARGET" == *.deb ]]; then
-            FILE_PATH=$(realpath "$TARGET")
-            echo "📥 Installing local .deb: $TARGET"
-            if ! distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y '$FILE_PATH'"; then
-                distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get install -f -y"
-            fi
-            APP_NAME=$(distrobox enter "$CONTAINER_NAME" -- bash -c "dpkg-deb -f '$FILE_PATH' Package")
-        else
-            echo "📥 Installing Debian package: $TARGET"
-            if ! distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $TARGET"; then
-                echo "❌ CRITICAL ERROR: Package '$TARGET' not found."
-                exit 1
-            fi
-            APP_NAME="$TARGET"
-        fi
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        vbox.append(header)
+        vbox.append(self.view_stack)
+
+        # --- VERBOSE CONSOLE ---
+        bottom_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        bottom_bar.set_margin_start(15)
+        bottom_bar.set_margin_end(15)
+        bottom_bar.set_margin_top(10)
+        bottom_bar.set_margin_bottom(10)
+        bottom_bar.set_halign(Gtk.Align.END)
+
+        self.verbose_toggle = Gtk.ToggleButton(label="Verbose Output")
+        self.verbose_toggle.connect("toggled", lambda b: self.console_revealer.set_reveal_child(b.get_active()))
+        bottom_bar.append(self.verbose_toggle)
+
+        self.console_revealer = Gtk.Revealer()
+        self.console_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
+        self.console_revealer.set_reveal_child(False)
+
+        console_inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        console_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        console_header.set_margin_start(15)
+        console_header.set_margin_end(15)
+        c_label = Gtk.Label(label="<b>System Output Engine</b>", use_markup=True)
+        c_label.set_hexpand(True)
+        c_label.set_halign(Gtk.Align.START)
+        clear_btn = Gtk.Button(label="Clear")
+        clear_btn.connect("clicked", lambda b: self.console_buffer.set_text(""))
+        console_header.append(c_label)
+        console_header.append(clear_btn)
         
-        echo "🔗 Bridging $APP_NAME to your desktop..."
-        EXPORT_SUCCESS=false
+        self.console_buffer = Gtk.TextBuffer()
+        self.console_view = Gtk.TextView(buffer=self.console_buffer)
+        self.console_view.set_editable(False)
+        self.console_view.set_wrap_mode(Gtk.WrapMode.WORD)
+        self.console_view.set_monospace(True)
+        self.console_view.add_css_class("card")
 
-        if distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $APP_NAME --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1; then
-            EXPORT_SUCCESS=true
-        else
-            FOUND_DESKTOP=$(distrobox enter "$CONTAINER_NAME" -- bash -c "ls /usr/share/applications | grep -i '$APP_NAME' | head -n 1")
-            if [ -n "$FOUND_DESKTOP" ]; then
-                CLEAN_NAME="${FOUND_DESKTOP%.desktop}"
-                if distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $CLEAN_NAME --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1; then
-                    EXPORT_SUCCESS=true
-                fi
-            elif distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $APP_NAME --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1; then
-                EXPORT_SUCCESS=true
-            fi
-        fi
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_child(self.console_view)
+        scroll.set_size_request(-1, 200)
+        scroll.set_margin_start(15)
+        scroll.set_margin_end(15)
+        scroll.set_margin_bottom(15)
 
-        if [ "$EXPORT_SUCCESS" = false ]; then
-            echo "⚠️ Standard bridging failed. Engaging Brute-Force Shortcut Generator..."
-            BRUTE_DESKTOP="$REAL_DESKTOP_DIR/certux-bruteforce-${APP_NAME}.desktop"
-            echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=/usr/bin/distrobox-enter -n $CONTAINER_NAME -- $APP_NAME\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$BRUTE_DESKTOP"
-        fi
-
-        echo "✅ Successfully installed and bridged!"
-        native_integration_cleanup
-        ;;
-
-    remove)
-        SOURCE="Auto"
-        if [ "$TARGET" == "Flatpak" ] || [ "$TARGET" == "Debian" ]; then
-            SOURCE="$TARGET"
-            TARGET="$EXTRA"
-        fi
+        console_inner.append(console_header)
+        console_inner.append(scroll)
+        self.console_revealer.set_child(console_inner)
         
-        if [ -z "$TARGET" ]; then echo "Usage: cert remove [Flatpak|Debian] <package>"; exit 1; fi
+        vbox.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        vbox.append(bottom_bar)
+        vbox.append(self.console_revealer)
+        self.set_content(vbox)
 
-        # --- FLATPAK REMOVAL ---
-        if [ "$SOURCE" == "Flatpak" ] || flatpak list --app --columns=application | grep -q "^${TARGET}$"; then
-            echo "🗑️ Removing Flatpak: $TARGET..."
-            flatpak uninstall -y "$TARGET"
-            echo "✅ Removed Flatpak $TARGET."
-            exit 0
-        fi
+        if len(sys.argv) > 1:
+            self.run_cert_command(f"/usr/bin/cert install '{sys.argv[1]}'")
+            
+        self.refresh_installed()
+        self.refresh_repos()
 
-        # --- DEBIAN REMOVAL ---
-        ensure_container
-        echo "🗑️ Removing Debian package: $TARGET..."
-        distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get remove -y $TARGET"
-        rm -f "$REAL_DESKTOP_DIR/certux-bruteforce-${TARGET}.desktop" 2>/dev/null || true
-        rm -f "$REAL_DESKTOP_DIR/${CONTAINER_NAME}-${TARGET}.desktop" 2>/dev/null || true
-        echo "✅ Removed Debian package $TARGET."
-        ;;
-esac
+    # ==========================================
+    # TAB 1: SEARCH PAGE
+    # ==========================================
+    def create_software_page(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        box.set_margin_top(20)
+        box.set_margin_start(40)
+        box.set_margin_end(40)
+
+        box.append(Gtk.Label(label="<span size='xx-large' weight='bold'>App Discovery</span>", use_markup=True))
+
+        search_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        search_box.set_halign(Gtk.Align.CENTER)
+        self.search_entry = Gtk.Entry(placeholder_text="Search Flatpak and Debian repositories...")
+        self.search_entry.set_width_chars(40)
+        search_btn = Gtk.Button(label="Search")
+        search_btn.add_css_class("suggested-action")
+        search_btn.connect("clicked", self.on_search_clicked)
+        search_box.append(self.search_entry)
+        search_box.append(search_btn)
+        box.append(search_box)
+
+        self.results_list = Gtk.ListBox()
+        self.results_list.add_css_class("boxed-list")
+        self.results_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        results_scroll = Gtk.ScrolledWindow()
+        results_scroll.set_child(self.results_list)
+        results_scroll.set_vexpand(True)
+        box.append(results_scroll)
+
+        return box
+
+    def on_search_clicked(self, button):
+        query = self.search_entry.get_text()
+        if not query: return
+        self._clear_list(self.results_list)
+        self.results_list.append(Adw.ActionRow(title="Querying repositories..."))
+        self.append_console(f"\n[API] Searching for '{query}'...\n")
+        
+        def worker():
+            process = subprocess.Popen(f"/usr/bin/cert --gui search '{query}'", shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            results_data = []
+            for line in process.stdout:
+                GLib.idle_add(self.append_console, line)
+                clean_line = line.strip()
+                if "API|SEARCH|" in clean_line:
+                    clean_line = clean_line[clean_line.find("API|SEARCH|"):]
+                    results_data.append(clean_line)
+            process.wait()
+            GLib.idle_add(self.populate_search_results, results_data)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def populate_search_results(self, results_data):
+        self._clear_list(self.results_list)
+        has_results = False
+        for line in results_data:
+            has_results = True
+            parts = line.split('|', 6)
+            if len(parts) >= 7:
+                source, app_id, name, desc, repo = parts[2], parts[3], parts[4], parts[5], parts[6]
+                
+                row = Adw.ActionRow(title=f"{name} [{source}]", subtitle=desc)
+                
+                btn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                btn_box.set_valign(Gtk.Align.CENTER)
+                btn_box.set_margin_top(5)
+                btn_box.set_margin_bottom(5)
+                
+                btn = Gtk.Button(label="Install")
+                btn.add_css_class("suggested-action")
+                btn.add_css_class("pill")
+                # THE FIX: We now explicitly pass the SOURCE (Flatpak or Debian) to the backend router
+                btn.connect("clicked", lambda b, s=source, pkg=app_id: self.run_cert_command(f"/usr/bin/cert install {s} '{pkg}'"))
+                
+                repo_label = Gtk.Label(label=f"<span size='x-small' foreground='gray'>Repo: {repo}</span>", use_markup=True)
+                
+                btn_box.append(btn)
+                btn_box.append(repo_label)
+                row.add_suffix(btn_box)
+                self.results_list.append(row)
+                    
+        if not has_results:
+            self.results_list.append(Adw.ActionRow(title="No results found."))
+
+    # ==========================================
+    # TAB 2: INSTALLED PAGE
+    # ==========================================
+    def create_installed_page(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        box.set_margin_top(20)
+        box.set_margin_start(40)
+        box.set_margin_end(40)
+
+        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        header_box.append(Gtk.Label(label="<span size='x-large' weight='bold'>System Operations</span>", use_markup=True, hexpand=True, halign=Gtk.Align.START))
+        
+        up_apps_btn = Gtk.Button(label="Update All Apps")
+        up_apps_btn.connect("clicked", lambda b: self.run_cert_command("/usr/bin/cert update-apps"))
+        
+        up_sys_btn = Gtk.Button(label="Update Core OS")
+        up_sys_btn.add_css_class("suggested-action")
+        up_sys_btn.connect("clicked", lambda b: self.run_cert_command("/usr/bin/cert update-sys"))
+        
+        ref_btn = Gtk.Button(icon_name="view-refresh-symbolic")
+        ref_btn.connect("clicked", lambda b: self.refresh_installed())
+        
+        header_box.append(up_apps_btn)
+        header_box.append(up_sys_btn)
+        header_box.append(ref_btn)
+        box.append(header_box)
+
+        self.installed_list = Gtk.ListBox()
+        self.installed_list.add_css_class("boxed-list")
+        self.installed_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        inst_scroll = Gtk.ScrolledWindow()
+        inst_scroll.set_child(self.installed_list)
+        inst_scroll.set_vexpand(True)
+        box.append(inst_scroll)
+
+        return box
+
+    def refresh_installed(self):
+        self._clear_list(self.installed_list)
+        self.installed_list.append(Adw.ActionRow(title="Scanning installed apps..."))
+        self.append_console(f"\n[API] Listing installed apps...\n")
+        
+        def worker():
+            process = subprocess.Popen("/usr/bin/cert --gui list", shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            results_data = []
+            for line in process.stdout:
+                GLib.idle_add(self.append_console, line)
+                clean_line = line.strip()
+                if "API|LIST|" in clean_line:
+                    clean_line = clean_line[clean_line.find("API|LIST|"):]
+                    results_data.append(clean_line)
+            process.wait()
+            GLib.idle_add(self.populate_installed, results_data)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def populate_installed(self, results_data):
+        self._clear_list(self.installed_list)
+        has_results = False
+        for line in results_data:
+            has_results = True
+            parts = line.split('|', 5)
+            if len(parts) >= 6:
+                source, app_id, name, repo = parts[2], parts[3], parts[4], parts[5]
+                
+                row = Adw.ActionRow(title=f"{name} [{source}]", subtitle=f"Repo: {repo} | ID: {app_id}")
+                
+                action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+                action_box.set_valign(Gtk.Align.CENTER)
+                action_box.set_margin_top(10)
+                action_box.set_margin_bottom(10)
+                
+                open_btn = Gtk.Button(label="Open")
+                open_btn.add_css_class("suggested-action")
+                open_btn.add_css_class("pill")
+                open_btn.connect("clicked", lambda b, s=source, pkg=app_id: self.run_cert_command(f"/usr/bin/cert launch {s} '{pkg}'"))
+                
+                rem_btn = Gtk.Button(label="Remove")
+                rem_btn.add_css_class("destructive-action")
+                rem_btn.add_css_class("pill")
+                # THE FIX: Explicitly passing SOURCE for removal as well
+                rem_btn.connect("clicked", lambda b, s=source, pkg=app_id: self.run_cert_command(f"/usr/bin/cert remove {s} '{pkg}'"))
+                
+                action_box.append(open_btn)
+                action_box.append(rem_btn)
+                row.add_suffix(action_box)
+                self.installed_list.append(row)
+                
+        if not has_results:
+            self.installed_list.append(Adw.ActionRow(title="No graphical applications found."))
+
+    # ==========================================
+    # TAB 3: REPOS PAGE
+    # ==========================================
+    def create_repo_page(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        box.set_margin_top(20)
+        box.set_margin_start(40)
+        box.set_margin_end(40)
+
+        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        header_box.append(Gtk.Label(label="<span size='x-large' weight='bold'>Repository Management</span>", use_markup=True, hexpand=True, halign=Gtk.Align.START))
+        
+        ref_btn = Gtk.Button(icon_name="view-refresh-symbolic")
+        ref_btn.connect("clicked", lambda b: self.refresh_repos())
+        header_box.append(ref_btn)
+        box.append(header_box)
+
+        add_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        add_box.set_halign(Gtk.Align.CENTER)
+        self.repo_entry = Gtk.Entry(placeholder_text="ppa:name/repo OR deb http://...")
+        self.repo_entry.set_width_chars(40)
+        add_btn = Gtk.Button(label="Add Debian Repo")
+        add_btn.connect("clicked", lambda b: self.run_cert_command(f"/usr/bin/cert repo add '{self.repo_entry.get_text()}'"))
+        add_box.append(self.repo_entry)
+        add_box.append(add_btn)
+        box.append(add_box)
+
+        self.repo_list = Gtk.ListBox()
+        self.repo_list.add_css_class("boxed-list")
+        self.repo_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        repo_scroll = Gtk.ScrolledWindow()
+        repo_scroll.set_child(self.repo_list)
+        repo_scroll.set_vexpand(True)
+        box.append(repo_scroll)
+
+        return box
+
+    def refresh_repos(self):
+        self._clear_list(self.repo_list)
+        self.repo_list.append(Adw.ActionRow(title="Scanning repositories..."))
+        self.append_console(f"\n[API] Scanning system repositories...\n")
+        
+        def worker():
+            process = subprocess.Popen("/usr/bin/cert --gui repo", shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            results_data = []
+            for line in process.stdout:
+                GLib.idle_add(self.append_console, line)
+                clean_line = line.strip()
+                if "API|REPO|" in clean_line:
+                    clean_line = clean_line[clean_line.find("API|REPO|"):]
+                    results_data.append(clean_line)
+            process.wait()
+            GLib.idle_add(self.populate_repos, results_data)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def populate_repos(self, results_data):
+        self._clear_list(self.repo_list)
+        has_results = False
+        for line in results_data:
+            has_results = True
+            parts = line.split('|', 3)
+            if len(parts) >= 4:
+                source, url = parts[2], parts[3]
+                row = Adw.ActionRow(title=url, subtitle=f"Source: {source} Registry")
+                
+                status = Gtk.Label(label="<span size='small' foreground='green'>● Active</span>", use_markup=True)
+                status.set_valign(Gtk.Align.CENTER)
+                row.add_suffix(status)
+                
+                self.repo_list.append(row)
+                
+        if not has_results:
+            self.repo_list.append(Adw.ActionRow(title="No repositories found."))
+
+    # ==========================================
+    # UTILS & EXECUTION
+    # ==========================================
+    def _clear_list(self, listbox):
+        while listbox.get_first_child() is not None:
+            listbox.remove(listbox.get_first_child())
+
+    def run_cert_command(self, command):
+        self.verbose_toggle.set_active(True)
+        self.console_buffer.insert(self.console_buffer.get_end_iter(), f"\n🚀 Executing: {command}\n")
+        self.scroll_to_bottom()
+        
+        def worker():
+            process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            for line in process.stdout:
+                GLib.idle_add(self.append_console, line)
+            process.wait()
+            if process.returncode == 0:
+                GLib.idle_add(self.append_console, "\n✅ Task Finished Successfully.\n")
+            else:
+                GLib.idle_add(self.append_console, f"\n❌ Task Failed (Error Code: {process.returncode}). Check output above.\n")
+                
+            if "install" in command or "remove" in command or "update-apps" in command:
+                GLib.idle_add(self.refresh_installed)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def append_console(self, text):
+        it = self.console_buffer.get_end_iter()
+        self.console_buffer.insert(it, text)
+        self.scroll_to_bottom()
+        
+    def scroll_to_bottom(self):
+        mark = self.console_buffer.create_mark("end", self.console_buffer.get_end_iter(), False)
+        self.console_view.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
+
+class CertuxApp(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="com.certux.software")
+
+    def do_activate(self):
+        win = CertuxSoftwareWindow(self)
+        win.present()
+
+app = CertuxApp()
+app.run(None)

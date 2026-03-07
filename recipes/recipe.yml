@@ -38,6 +38,17 @@ modules:
         - gnome-software
         - gnome-software-plugin-flatpak
 
+  # --- NEW: Windows UI Transformation ---
+  - type: gnome-extensions
+    install:
+      - 1160 # Dash to Panel (Windows Taskbar)
+      - 615  # AppIndicator Support (System Tray)
+
+  - type: gschema-overrides
+    include:
+      - 99-certux-windows.gschema.override
+  # --------------------------------------
+
   - type: default-flatpaks
     configurations:
       - notify: true

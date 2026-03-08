@@ -201,7 +201,7 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
                 item['checkbox'].set_active(False)
 
     # ==========================================
-    # TAB 2: INSTALLED PAGE (With Native Factory UI)
+    # TAB 2: INSTALLED PAGE (With Custom Dependency Tree)
     # ==========================================
     def create_installed_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
@@ -242,24 +242,32 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         return box
 
     def build_installed_row(self, source, app_id, name, repo):
-        """Factory Function: Generates the complex nested row natively to prevent Ghost Widgets"""
-        row = Adw.ExpanderRow(title=f"{name} [{source}]", subtitle=f"Repo: {repo} | ID: {app_id}")
+        """Constructs a Custom Dependency Wrapper that bypasses GTK API conflicts"""
+        # Outer Wrapper
+        row_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         
-        # Crash Notification Icon
+        # The Main App Row
+        main_row = Adw.ActionRow(title=f"{name} [{source}]", subtitle=f"Repo: {repo} | ID: {app_id}")
+        
+        # Exception Notification Icon
         error_icon = Gtk.Image.new_from_icon_name("dialog-error-symbolic")
         error_icon.add_css_class("error-color") 
         error_icon.set_visible(False)
-        row.add_prefix(error_icon)
+        main_row.add_prefix(error_icon)
         
         action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
         action_box.set_valign(Gtk.Align.CENTER)
         action_box.set_margin_top(10)
         action_box.set_margin_bottom(10)
         
+        # Dependency Tree Toggle
+        dep_btn = Gtk.ToggleButton(icon_name="pan-down-symbolic")
+        dep_btn.add_css_class("circular")
+        
         open_btn = Gtk.Button(label="Open")
         open_btn.add_css_class("suggested-action")
         open_btn.add_css_class("pill")
-        open_btn.connect("clicked", lambda b: self.launch_app_catcher(source, app_id, row, error_icon))
+        open_btn.connect("clicked", lambda b: self.launch_app_catcher(source, app_id, dep_btn, error_icon))
         
         rem_btn = Gtk.Button(label="Remove")
         rem_btn.add_css_class("destructive-action")
@@ -268,35 +276,58 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         
         action_box.append(open_btn)
         action_box.append(rem_btn)
-        row.add_action_widget(action_box)
+        action_box.append(dep_btn)
+        main_row.add_suffix(action_box)
         
-        # State tracker attached directly to the native widget
-        setattr(row, "_deps_loaded", False)
-        row.connect("notify::expanded", lambda r, p: self.on_row_expanded(r, source, app_id))
+        # Attach the main row to the wrapper
+        row_wrapper.append(main_row)
         
-        return row
+        # The Hidden Dependency Tree
+        dep_revealer = Gtk.Revealer()
+        dep_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        dep_list = Gtk.ListBox()
+        dep_list.add_css_class("boxed-list")
+        dep_list.set_margin_start(30) # Indents the tree underneath the app!
+        dep_list.set_margin_end(20)
+        dep_list.set_margin_bottom(10)
+        dep_revealer.set_child(dep_list)
+        
+        row_wrapper.append(dep_revealer)
+        setattr(row_wrapper, "_deps_loaded", False)
+        
+        # Logic to expand and load dependencies safely
+        def on_toggle_deps(btn):
+            if btn.get_active():
+                btn.set_icon_name("pan-up-symbolic")
+                dep_revealer.set_reveal_child(True)
+                if not getattr(row_wrapper, "_deps_loaded"):
+                    setattr(row_wrapper, "_deps_loaded", True)
+                    loading_row = Adw.ActionRow(title="Calculating dependency tree...")
+                    dep_list.append(loading_row)
+                    self.fetch_dependencies(source, app_id, dep_list, loading_row)
+            else:
+                btn.set_icon_name("pan-down-symbolic")
+                dep_revealer.set_reveal_child(False)
+                
+        dep_btn.connect("toggled", on_toggle_deps)
+        return row_wrapper
 
-    def on_row_expanded(self, row, source, app_id):
-        if row.get_expanded() and not getattr(row, "_deps_loaded"):
-            setattr(row, "_deps_loaded", True)
-            loading_row = Adw.ActionRow(title="Loading dependencies...")
-            row.add_row(loading_row)
-            
-            def worker():
-                subprocess.run(f"/usr/bin/cert --gui deps {source} '{app_id}' </dev/null", shell=True)
-                deps_data = []
-                if os.path.exists("/tmp/certux_api"):
-                    with open("/tmp/certux_api", "r") as f:
-                        for line in f:
-                            if line.startswith("API|DEPS|"):
-                                deps_data.append(line.strip())
-                GLib.idle_add(self.populate_deps, row, deps_data, loading_row)
-            threading.Thread(target=worker, daemon=True).start()
+    def fetch_dependencies(self, source, app_id, dep_list, loading_row):
+        def worker():
+            subprocess.run(f"/usr/bin/cert --gui deps {source} '{app_id}' </dev/null", shell=True)
+            deps_data = []
+            if os.path.exists("/tmp/certux_api"):
+                with open("/tmp/certux_api", "r") as f:
+                    for line in f:
+                        if line.startswith("API|DEPS|"):
+                            deps_data.append(line.strip())
+            GLib.idle_add(self.populate_deps, dep_list, deps_data, loading_row)
+        threading.Thread(target=worker, daemon=True).start()
 
-    def populate_deps(self, parent_row, deps_data, loading_row):
-        parent_row.remove(loading_row)
+    def populate_deps(self, dep_list, deps_data, loading_row):
+        dep_list.remove(loading_row)
         if not deps_data:
-            parent_row.add_row(Adw.ActionRow(title="No external dependencies found."))
+            dep_list.append(Adw.ActionRow(title="No external dependencies found."))
             return
             
         for line in deps_data:
@@ -321,10 +352,10 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
                 dep_action_box.append(d_open)
                 dep_action_box.append(d_rem)
                 dep_row.add_suffix(dep_action_box)
-                parent_row.add_row(dep_row)
+                dep_list.append(dep_row)
 
-    def launch_app_catcher(self, source, app_id, row_widget, error_icon):
-        """The Exception Catcher: Launches apps and watches for crash codes"""
+    def launch_app_catcher(self, source, app_id, toggle_btn, error_icon):
+        """The Exception Catcher"""
         self.progress_bar.set_visible(True)
         self.progress_bar.pulse()
         
@@ -332,13 +363,13 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
             process = subprocess.Popen(f"/usr/bin/cert launch {source} '{app_id}' </dev/null", shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             process.wait()
             
-            # If the app crashes, trigger the UI Notification
+            # Crash Detection
             if process.returncode != 0:
                 GLib.idle_add(self.append_console, f"\n❌ Crash Detected (Code {process.returncode}) for {app_id}\n")
                 def trigger_crash():
                     error_icon.set_visible(True)
-                    error_icon.set_tooltip_text(f"Crash Detected: Exception Code {process.returncode}\nClick to expand dependencies.")
-                    row_widget.set_expanded(True)
+                    error_icon.set_tooltip_text(f"Crash Detected: Exception Code {process.returncode}\nClick dropdown arrow to check dependencies.")
+                    toggle_btn.set_active(True) # Expands the dependencies automatically
                 GLib.idle_add(trigger_crash)
             
             GLib.idle_add(self.progress_bar.set_visible, False)
@@ -372,9 +403,9 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
             if len(parts) >= 6:
                 source, app_id, name, repo = parts[2], parts[3], parts[4], parts[5]
                 
-                row = self.build_installed_row(source, app_id, name, repo)
-                self.installed_rows.append({'row': row, 'name': name.lower(), 'id': app_id.lower()})
-                self.installed_list.append(row)
+                row_wrapper = self.build_installed_row(source, app_id, name, repo)
+                self.installed_rows.append({'row': row_wrapper, 'name': name.lower(), 'id': app_id.lower()})
+                self.installed_list.append(row_wrapper)
                 
         if not has_results:
             self.installed_list.append(Adw.ActionRow(title="No graphical applications found."))

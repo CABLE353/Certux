@@ -10,99 +10,6 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, GLib
 
-class InstalledAppRow(Adw.ExpanderRow):
-    """Custom UI Row to handle nested dependencies and crash tracking"""
-    def __init__(self, source, app_id, name, repo, parent_window):
-        super().__init__(title=f"{name} [{source}]", subtitle=f"Repo: {repo} | ID: {app_id}")
-        self.app_id = app_id
-        self.source = source
-        self.parent_window = parent_window
-        self.deps_loaded = False
-        
-        # Build the Crash Notification Icon
-        self.error_icon = Gtk.Image.new_from_icon_name("dialog-error-symbolic")
-        self.error_icon.add_css_class("error-color") # Makes it red
-        self.error_icon.set_visible(False)
-        self.add_prefix(self.error_icon)
-        
-        # Build the Action Box
-        action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
-        action_box.set_valign(Gtk.Align.CENTER)
-        action_box.set_margin_top(10)
-        action_box.set_margin_bottom(10)
-        
-        open_btn = Gtk.Button(label="Open")
-        open_btn.add_css_class("suggested-action")
-        open_btn.add_css_class("pill")
-        open_btn.connect("clicked", lambda b: self.parent_window.launch_app(self.source, self.app_id, self))
-        
-        rem_btn = Gtk.Button(label="Remove")
-        rem_btn.add_css_class("destructive-action")
-        rem_btn.add_css_class("pill")
-        rem_btn.connect("clicked", lambda b: self.parent_window.queue_command(f"/usr/bin/cert remove {self.source} '{self.app_id}'"))
-        
-        action_box.append(open_btn)
-        action_box.append(rem_btn)
-        self.add_action_widget(action_box)
-        
-        # Listen for when the user clicks the drop-down arrow
-        self.connect("notify::expanded", self.on_expanded)
-
-    def on_expanded(self, widget, param):
-        if self.get_expanded() and not self.deps_loaded:
-            self.deps_loaded = True
-            loading_row = Adw.ActionRow(title="Loading dependencies...")
-            self.add_row(loading_row)
-            
-            def worker():
-                subprocess.run(f"/usr/bin/cert --gui deps {self.source} '{self.app_id}'", shell=True)
-                deps_data = []
-                if os.path.exists("/tmp/certux_api"):
-                    with open("/tmp/certux_api", "r") as f:
-                        for line in f:
-                            if line.startswith("API|DEPS|"):
-                                deps_data.append(line.strip())
-                GLib.idle_add(self.populate_deps, deps_data, loading_row)
-            threading.Thread(target=worker, daemon=True).start()
-
-    def populate_deps(self, deps_data, loading_row):
-        self.remove(loading_row)
-        if not deps_data:
-            self.add_row(Adw.ActionRow(title="No external dependencies found."))
-            return
-            
-        for line in deps_data:
-            parts = line.split('|', 5)
-            if len(parts) >= 6:
-                d_source, d_id, d_name, d_type = parts[2], parts[3], parts[4], parts[5]
-                
-                # Make the dependency look exactly like a main app row
-                dep_row = Adw.ActionRow(title=f"{d_name} [{d_source}]", subtitle=f"Type: {d_type} | ID: {d_id}")
-                
-                dep_action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
-                dep_action_box.set_valign(Gtk.Align.CENTER)
-                
-                # Dependencies can't be "Opened", but we include a disabled button to match styling
-                d_open = Gtk.Button(label="Open")
-                d_open.add_css_class("pill")
-                d_open.set_sensitive(False) 
-                
-                d_rem = Gtk.Button(label="Remove")
-                d_rem.add_css_class("destructive-action")
-                d_rem.add_css_class("pill")
-                d_rem.connect("clicked", lambda b, s=d_source, pkg=d_id: self.parent_window.queue_command(f"/usr/bin/cert remove {s} '{pkg}'"))
-                
-                dep_action_box.append(d_open)
-                dep_action_box.append(d_rem)
-                dep_row.add_suffix(dep_action_box)
-                self.add_row(dep_row)
-
-    def trigger_crash_state(self, exit_code):
-        """Called when the Exception Catcher hooks an error"""
-        self.error_icon.set_visible(True)
-        self.error_icon.set_tooltip_text(f"Crash Detected: Exception Code {exit_code}\nClick to expand dependencies.")
-        self.set_expanded(True)
-
 class CertuxSoftwareWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Certux Software Center")
@@ -110,10 +17,11 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
 
         self.install_queue = []
         self.search_items = []
-        self.installed_rows = [] # Keeps track of rows for local filtering
+        self.installed_rows = [] 
         self.is_processing = False
 
         self.view_stack = Adw.ViewStack()
+        
         page_software = self.create_software_page()
         page_installed = self.create_installed_page()
         page_repos = self.create_repo_page()
@@ -132,6 +40,7 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         self.progress_bar = Gtk.ProgressBar()
         self.progress_bar.set_visible(False)
         vbox.append(self.progress_bar)
+
         vbox.append(self.view_stack)
 
         # --- VERBOSE CONSOLE ---
@@ -185,6 +94,9 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         vbox.append(self.console_revealer)
         self.set_content(vbox)
 
+        if len(sys.argv) > 1:
+            self.queue_command(f"/usr/bin/cert install Auto '{sys.argv[1]}'")
+            
         self.refresh_installed()
         self.refresh_repos()
 
@@ -201,12 +113,12 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
 
         search_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         search_box.set_halign(Gtk.Align.CENTER)
-        self.search_entry = Gtk.Entry(placeholder_text="Search databases...")
+        self.search_entry = Gtk.Entry(placeholder_text="Search Flatpak and Debian databases...")
         self.search_entry.set_width_chars(40)
         search_btn = Gtk.Button(label="Search")
         search_btn.connect("clicked", self.on_search_clicked)
         
-        self.btn_batch_install = Gtk.Button(label="Install Selected")
+        self.btn_batch_install = Gtk.Button(label="Install Selected Apps")
         self.btn_batch_install.add_css_class("suggested-action")
         self.btn_batch_install.connect("clicked", self.on_batch_install_clicked)
         
@@ -222,6 +134,7 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         results_scroll.set_child(self.results_list)
         results_scroll.set_vexpand(True)
         box.append(results_scroll)
+
         return box
 
     def on_search_clicked(self, button):
@@ -232,7 +145,7 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         
         self.progress_bar.set_visible(True)
         def worker():
-            subprocess.run(f"/usr/bin/cert --gui search '{query}'", shell=True)
+            subprocess.run(f"/usr/bin/cert --gui search '{query}' </dev/null", shell=True)
             results_data = []
             if os.path.exists("/tmp/certux_api"):
                 with open("/tmp/certux_api", "r") as f:
@@ -253,18 +166,24 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
             parts = line.split('|', 6)
             if len(parts) >= 7:
                 source, app_id, name, desc, repo = parts[2], parts[3], parts[4], parts[5], parts[6]
+                
                 row = Adw.ActionRow(title=f"{name} [{source}]", subtitle=desc)
                 
                 checkbox = Gtk.CheckButton()
                 checkbox.set_valign(Gtk.Align.CENTER)
                 row.add_prefix(checkbox)
+                
                 self.search_items.append({'checkbox': checkbox, 'source': source, 'app_id': app_id})
                 
                 btn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
                 btn_box.set_valign(Gtk.Align.CENTER)
+                btn_box.set_margin_top(5)
+                btn_box.set_margin_bottom(5)
+                
                 btn = Gtk.Button(label="Install")
                 btn.add_css_class("pill")
                 btn.connect("clicked", lambda b, s=source, pkg=app_id: self.queue_command(f"/usr/bin/cert install {s} '{pkg}'"))
+                
                 repo_label = Gtk.Label(label=f"<span size='x-small' foreground='gray'>Repo: {repo}</span>", use_markup=True)
                 
                 btn_box.append(btn)
@@ -282,7 +201,7 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
                 item['checkbox'].set_active(False)
 
     # ==========================================
-    # TAB 2: INSTALLED PAGE (With Local Filter)
+    # TAB 2: INSTALLED PAGE (With Native Factory UI)
     # ==========================================
     def create_installed_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
@@ -295,9 +214,11 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         
         up_apps_btn = Gtk.Button(label="Update All Apps")
         up_apps_btn.connect("clicked", lambda b: self.queue_command("/usr/bin/cert update-apps"))
+        
         up_sys_btn = Gtk.Button(label="Update Core OS")
         up_sys_btn.add_css_class("suggested-action")
         up_sys_btn.connect("clicked", lambda b: self.queue_command("/usr/bin/cert update-sys"))
+        
         ref_btn = Gtk.Button(icon_name="view-refresh-symbolic")
         ref_btn.connect("clicked", lambda b: self.refresh_installed())
         
@@ -306,7 +227,6 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         header_box.append(ref_btn)
         box.append(header_box)
         
-        # --- LOCAL SEARCH BOX FOR INSTALLED APPS ---
         self.local_search = Gtk.Entry(placeholder_text="Filter installed apps...")
         self.local_search.connect("changed", self.on_local_search_changed)
         box.append(self.local_search)
@@ -321,13 +241,117 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
 
         return box
 
+    def build_installed_row(self, source, app_id, name, repo):
+        """Factory Function: Generates the complex nested row natively to prevent Ghost Widgets"""
+        row = Adw.ExpanderRow(title=f"{name} [{source}]", subtitle=f"Repo: {repo} | ID: {app_id}")
+        
+        # Crash Notification Icon
+        error_icon = Gtk.Image.new_from_icon_name("dialog-error-symbolic")
+        error_icon.add_css_class("error-color") 
+        error_icon.set_visible(False)
+        row.add_prefix(error_icon)
+        
+        action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        action_box.set_valign(Gtk.Align.CENTER)
+        action_box.set_margin_top(10)
+        action_box.set_margin_bottom(10)
+        
+        open_btn = Gtk.Button(label="Open")
+        open_btn.add_css_class("suggested-action")
+        open_btn.add_css_class("pill")
+        open_btn.connect("clicked", lambda b: self.launch_app_catcher(source, app_id, row, error_icon))
+        
+        rem_btn = Gtk.Button(label="Remove")
+        rem_btn.add_css_class("destructive-action")
+        rem_btn.add_css_class("pill")
+        rem_btn.connect("clicked", lambda b: self.queue_command(f"/usr/bin/cert remove {source} '{app_id}'"))
+        
+        action_box.append(open_btn)
+        action_box.append(rem_btn)
+        row.add_action_widget(action_box)
+        
+        # State tracker attached directly to the native widget
+        setattr(row, "_deps_loaded", False)
+        row.connect("notify::expanded", lambda r, p: self.on_row_expanded(r, source, app_id))
+        
+        return row
+
+    def on_row_expanded(self, row, source, app_id):
+        if row.get_expanded() and not getattr(row, "_deps_loaded"):
+            setattr(row, "_deps_loaded", True)
+            loading_row = Adw.ActionRow(title="Loading dependencies...")
+            row.add_row(loading_row)
+            
+            def worker():
+                subprocess.run(f"/usr/bin/cert --gui deps {source} '{app_id}' </dev/null", shell=True)
+                deps_data = []
+                if os.path.exists("/tmp/certux_api"):
+                    with open("/tmp/certux_api", "r") as f:
+                        for line in f:
+                            if line.startswith("API|DEPS|"):
+                                deps_data.append(line.strip())
+                GLib.idle_add(self.populate_deps, row, deps_data, loading_row)
+            threading.Thread(target=worker, daemon=True).start()
+
+    def populate_deps(self, parent_row, deps_data, loading_row):
+        parent_row.remove(loading_row)
+        if not deps_data:
+            parent_row.add_row(Adw.ActionRow(title="No external dependencies found."))
+            return
+            
+        for line in deps_data:
+            parts = line.split('|', 5)
+            if len(parts) >= 6:
+                d_source, d_id, d_name, d_type = parts[2], parts[3], parts[4], parts[5]
+                
+                dep_row = Adw.ActionRow(title=f"{d_name} [{d_source}]", subtitle=f"Type: {d_type} | ID: {d_id}")
+                
+                dep_action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+                dep_action_box.set_valign(Gtk.Align.CENTER)
+                
+                d_open = Gtk.Button(label="Open")
+                d_open.add_css_class("pill")
+                d_open.set_sensitive(False) # Disabled for dependencies
+                
+                d_rem = Gtk.Button(label="Remove")
+                d_rem.add_css_class("destructive-action")
+                d_rem.add_css_class("pill")
+                d_rem.connect("clicked", lambda b, s=d_source, pkg=d_id: self.queue_command(f"/usr/bin/cert remove {s} '{pkg}'"))
+                
+                dep_action_box.append(d_open)
+                dep_action_box.append(d_rem)
+                dep_row.add_suffix(dep_action_box)
+                parent_row.add_row(dep_row)
+
+    def launch_app_catcher(self, source, app_id, row_widget, error_icon):
+        """The Exception Catcher: Launches apps and watches for crash codes"""
+        self.progress_bar.set_visible(True)
+        self.progress_bar.pulse()
+        
+        def worker():
+            process = subprocess.Popen(f"/usr/bin/cert launch {source} '{app_id}' </dev/null", shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            process.wait()
+            
+            # If the app crashes, trigger the UI Notification
+            if process.returncode != 0:
+                GLib.idle_add(self.append_console, f"\n❌ Crash Detected (Code {process.returncode}) for {app_id}\n")
+                def trigger_crash():
+                    error_icon.set_visible(True)
+                    error_icon.set_tooltip_text(f"Crash Detected: Exception Code {process.returncode}\nClick to expand dependencies.")
+                    row_widget.set_expanded(True)
+                GLib.idle_add(trigger_crash)
+            
+            GLib.idle_add(self.progress_bar.set_visible, False)
+            
+        threading.Thread(target=worker, daemon=True).start()
+
     def refresh_installed(self):
         self._clear_list(self.installed_list)
         self.installed_rows = []
         self.installed_list.append(Adw.ActionRow(title="Scanning installed apps..."))
         
         def worker():
-            subprocess.run("/usr/bin/cert --gui list", shell=True)
+            subprocess.run("/usr/bin/cert --gui list </dev/null", shell=True)
             results_data = []
             if os.path.exists("/tmp/certux_api"):
                 with open("/tmp/certux_api", "r") as f:
@@ -340,58 +364,45 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
     def populate_installed(self, results_data):
         self._clear_list(self.installed_list)
         self.installed_rows = []
+        has_results = False
         
         for line in results_data:
+            has_results = True
             parts = line.split('|', 5)
             if len(parts) >= 6:
                 source, app_id, name, repo = parts[2], parts[3], parts[4], parts[5]
                 
-                # Instantiate the custom Dependency-Resolving Row
-                row = InstalledAppRow(source, app_id, name, repo, self)
+                row = self.build_installed_row(source, app_id, name, repo)
                 self.installed_rows.append({'row': row, 'name': name.lower(), 'id': app_id.lower()})
                 self.installed_list.append(row)
+                
+        if not has_results:
+            self.installed_list.append(Adw.ActionRow(title="No graphical applications found."))
 
     def on_local_search_changed(self, entry):
         query = entry.get_text().lower()
         for item in self.installed_rows:
-            # If query is in the name or ID, show it, otherwise hide it
             if query in item['name'] or query in item['id']:
                 item['row'].set_visible(True)
             else:
                 item['row'].set_visible(False)
 
-    def launch_app(self, source, app_id, row_widget):
-        """The Exception Catcher Routing Function"""
-        self.progress_bar.set_visible(True)
-        self.progress_bar.pulse()
-        
-        def worker():
-            process = subprocess.Popen(f"/usr/bin/cert launch {source} '{app_id}'", shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            process.wait()
-            
-            # THE CRASH CATCHER LOGIC
-            if process.returncode != 0:
-                GLib.idle_add(self.append_console, f"\n❌ Crash Detected (Code {process.returncode}) for {app_id}\n")
-                GLib.idle_add(row_widget.trigger_crash_state, process.returncode)
-            
-            GLib.idle_add(self.progress_bar.set_visible, False)
-            
-        threading.Thread(target=worker, daemon=True).start()
-
     # ==========================================
-    # TAB 3: REPOS PAGE (Omitted for brevity, kept exactly same as v7.0)
+    # TAB 3: REPOS PAGE
     # ==========================================
     def create_repo_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
         box.set_margin_top(20)
         box.set_margin_start(40)
         box.set_margin_end(40)
+
         header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         header_box.append(Gtk.Label(label="<span size='x-large' weight='bold'>Repository Management</span>", use_markup=True, hexpand=True, halign=Gtk.Align.START))
         ref_btn = Gtk.Button(icon_name="view-refresh-symbolic")
         ref_btn.connect("clicked", lambda b: self.refresh_repos())
         header_box.append(ref_btn)
         box.append(header_box)
+
         add_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         add_box.set_halign(Gtk.Align.CENTER)
         self.repo_entry = Gtk.Entry(placeholder_text="ppa:name/repo OR deb http://...")
@@ -401,6 +412,7 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         add_box.append(self.repo_entry)
         add_box.append(add_btn)
         box.append(add_box)
+
         self.repo_list = Gtk.ListBox()
         self.repo_list.add_css_class("boxed-list")
         self.repo_list.set_selection_mode(Gtk.SelectionMode.NONE)
@@ -408,13 +420,15 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         repo_scroll.set_child(self.repo_list)
         repo_scroll.set_vexpand(True)
         box.append(repo_scroll)
+
         return box
 
     def refresh_repos(self):
         self._clear_list(self.repo_list)
         self.repo_list.append(Adw.ActionRow(title="Scanning repositories..."))
+        
         def worker():
-            subprocess.run("/usr/bin/cert --gui repo", shell=True)
+            subprocess.run("/usr/bin/cert --gui repo </dev/null", shell=True)
             results_data = []
             if os.path.exists("/tmp/certux_api"):
                 with open("/tmp/certux_api", "r") as f:
@@ -437,6 +451,7 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
                 status.set_valign(Gtk.Align.CENTER)
                 row.add_suffix(status)
                 self.repo_list.append(row)
+                
         if not has_results:
             self.repo_list.append(Adw.ActionRow(title="No repositories found."))
 

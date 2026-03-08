@@ -201,7 +201,7 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
                 item['checkbox'].set_active(False)
 
     # ==========================================
-    # TAB 2: INSTALLED PAGE (With Custom Dependency Tree)
+    # TAB 2: INSTALLED PAGE
     # ==========================================
     def create_installed_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
@@ -242,14 +242,9 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         return box
 
     def build_installed_row(self, source, app_id, name, repo):
-        """Constructs a Custom Dependency Wrapper that bypasses GTK API conflicts"""
-        # Outer Wrapper
         row_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        
-        # The Main App Row
         main_row = Adw.ActionRow(title=f"{name} [{source}]", subtitle=f"Repo: {repo} | ID: {app_id}")
         
-        # Exception Notification Icon
         error_icon = Gtk.Image.new_from_icon_name("dialog-error-symbolic")
         error_icon.add_css_class("error-color") 
         error_icon.set_visible(False)
@@ -260,7 +255,6 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         action_box.set_margin_top(10)
         action_box.set_margin_bottom(10)
         
-        # Dependency Tree Toggle
         dep_btn = Gtk.ToggleButton(icon_name="pan-down-symbolic")
         dep_btn.add_css_class("circular")
         
@@ -279,15 +273,13 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         action_box.append(dep_btn)
         main_row.add_suffix(action_box)
         
-        # Attach the main row to the wrapper
         row_wrapper.append(main_row)
         
-        # The Hidden Dependency Tree
         dep_revealer = Gtk.Revealer()
         dep_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
         dep_list = Gtk.ListBox()
         dep_list.add_css_class("boxed-list")
-        dep_list.set_margin_start(30) # Indents the tree underneath the app!
+        dep_list.set_margin_start(30) 
         dep_list.set_margin_end(20)
         dep_list.set_margin_bottom(10)
         dep_revealer.set_child(dep_list)
@@ -295,7 +287,6 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         row_wrapper.append(dep_revealer)
         setattr(row_wrapper, "_deps_loaded", False)
         
-        # Logic to expand and load dependencies safely
         def on_toggle_deps(btn):
             if btn.get_active():
                 btn.set_icon_name("pan-up-symbolic")
@@ -337,25 +328,14 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
                 
                 dep_row = Adw.ActionRow(title=f"{d_name} [{d_source}]", subtitle=f"Type: {d_type} | ID: {d_id}")
                 
-                dep_action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
-                dep_action_box.set_valign(Gtk.Align.CENTER)
+                # Removed Action Box completely - replaced with a static text badge
+                status_label = Gtk.Label(label="<span size='small' foreground='gray'>System Component</span>", use_markup=True)
+                status_label.set_valign(Gtk.Align.CENTER)
+                dep_row.add_suffix(status_label)
                 
-                d_open = Gtk.Button(label="Open")
-                d_open.add_css_class("pill")
-                d_open.set_sensitive(False) # Disabled for dependencies
-                
-                d_rem = Gtk.Button(label="Remove")
-                d_rem.add_css_class("destructive-action")
-                d_rem.add_css_class("pill")
-                d_rem.connect("clicked", lambda b, s=d_source, pkg=d_id: self.queue_command(f"/usr/bin/cert remove {s} '{pkg}'"))
-                
-                dep_action_box.append(d_open)
-                dep_action_box.append(d_rem)
-                dep_row.add_suffix(dep_action_box)
                 dep_list.append(dep_row)
 
     def launch_app_catcher(self, source, app_id, toggle_btn, error_icon):
-        """The Exception Catcher"""
         self.progress_bar.set_visible(True)
         self.progress_bar.pulse()
         
@@ -363,13 +343,12 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
             process = subprocess.Popen(f"/usr/bin/cert launch {source} '{app_id}' </dev/null", shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             process.wait()
             
-            # Crash Detection
             if process.returncode != 0:
                 GLib.idle_add(self.append_console, f"\n❌ Crash Detected (Code {process.returncode}) for {app_id}\n")
                 def trigger_crash():
                     error_icon.set_visible(True)
                     error_icon.set_tooltip_text(f"Crash Detected: Exception Code {process.returncode}\nClick dropdown arrow to check dependencies.")
-                    toggle_btn.set_active(True) # Expands the dependencies automatically
+                    toggle_btn.set_active(True) 
                 GLib.idle_add(trigger_crash)
             
             GLib.idle_add(self.progress_bar.set_visible, False)

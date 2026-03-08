@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Certux Universal Engine v8.4 - "Decisive Flatpak Routing"
+# Certux Universal Engine v8.5 - "Silent API Routing"
 
 GUI_MODE=false
 if [ "$1" == "--gui" ]; then
@@ -25,6 +25,7 @@ EXTRA=$2
 CONTAINER_NAME="certux-legacy-layer"
 BASE_IMAGE="debian:latest"
 REAL_DESKTOP_DIR="$HOME/.local/share/applications"
+API_LOG="/tmp/certux_api"
 
 ensure_container() {
     if ! distrobox list | grep -q "$CONTAINER_NAME"; then
@@ -40,21 +41,24 @@ native_integration_cleanup() {
     chmod +x "$REAL_DESKTOP_DIR/"*.desktop 2>/dev/null || true
 }
 
-# --- THE MACHINE-READABLE GUI OUTPUT (v8.5) ---
-API_LOG="/tmp/certux_api"
+# --- THE MACHINE-READABLE GUI OUTPUT (Writes to hidden file) ---
 if [ "$GUI_MODE" = true ]; then
     > "$API_LOG" # Clear previous API data
     case "$COMMAND" in
         search)
-            # Send data to the hidden file, not the terminal
-            flatpak search "$TARGET" --columns=application,name,description,remotes 2>/dev/null | awk -F'\t' 'NR>1 {print "API|SEARCH|Flatpak|"$1"|"$2"|"$3"|"$4}' >> "$API_LOG" &
+            flatpak search "$TARGET" --columns=application,name,description,remotes 2>/dev/null | awk -F'\t' 'NR>1 {print "API|SEARCH|Flatpak|"$1"|"$2"|"$3"|"$4}' >> "$API_LOG"
             ensure_container >/dev/null 2>&1
-            distrobox-enter -n "$CONTAINER_NAME" -- apt-cache search "$TARGET" 2>/dev/null | head -n 15 | awk -F' - ' -v target="$TARGET" '{print "API|SEARCH|Debian|"$1"|"$1"|"$2"|Debian Sandbox"}' >> "$API_LOG"
+            distrobox-enter -n "$CONTAINER_NAME" -- apt-cache search "$TARGET" 2>/dev/null | head -n 15 | awk -F' - ' '{print "API|SEARCH|Debian|"$1"|"$1"|"$2"|Debian Sandbox"}' >> "$API_LOG"
             ;;
         list)
             flatpak list --app --columns=application,name,origin 2>/dev/null | awk -F'\t' 'NR>1 {print "API|LIST|Flatpak|"$1"|"$2"|"$3}' >> "$API_LOG"
             ensure_container >/dev/null 2>&1
             distrobox-enter -n "$CONTAINER_NAME" -- apt-mark showmanual 2>/dev/null | awk '{print "API|LIST|Debian|"$1"|"$1"|Debian Sandbox"}' >> "$API_LOG"
+            ;;
+        repo)
+            echo "API|REPO|Flatpak|Flathub Universal Linux Registry" >> "$API_LOG"
+            ensure_container >/dev/null 2>&1
+            distrobox-enter -n "$CONTAINER_NAME" -- bash -c "grep -E '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null" | awk '{print "API|REPO|Debian|"$0}' >> "$API_LOG"
             ;;
     esac
     exit 0
@@ -105,10 +109,8 @@ case "$COMMAND" in
             exit 0
         fi
 
-        # --- FLATPAK ROUTING ---
         if [ "$SOURCE" == "Flatpak" ] || [[ "$SOURCE" == "Auto" && "$TARGET" == *.*.* && "$TARGET" != *.deb ]]; then
             echo "📥 Installing Native Flatpak: $TARGET..."
-            # THE FIX: Added --system to bypass the user/system duplicate prompt
             if flatpak install --system -y "$TARGET"; then
                 echo "✅ Flatpak $TARGET successfully installed!"
                 exit 0
@@ -118,7 +120,6 @@ case "$COMMAND" in
             fi
         fi
 
-        # --- DEBIAN ROUTING ---
         ensure_container
         if [[ -f "$TARGET" && "$TARGET" == *.deb ]]; then
             FILE_PATH=$(realpath "$TARGET")
@@ -154,7 +155,6 @@ case "$COMMAND" in
         fi
 
         if [ "$EXPORT_SUCCESS" = false ]; then
-            echo "⚠️ Standard bridging failed. Engaging Brute-Force Shortcut Generator..."
             BRUTE_DESKTOP="$REAL_DESKTOP_DIR/certux-bruteforce-${APP_NAME}.desktop"
             echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=/usr/bin/distrobox-enter -n $CONTAINER_NAME -- $TARGET\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$BRUTE_DESKTOP"
         fi
@@ -166,7 +166,6 @@ case "$COMMAND" in
     remove)
         if [ -z "$TARGET" ]; then echo "Usage: cert remove [Flatpak|Debian] <package>"; exit 1; fi
 
-        # --- FLATPAK REMOVAL ---
         if [ "$SOURCE" == "Flatpak" ] || flatpak list --app --columns=application | grep -q "^${TARGET}$"; then
             echo "🗑️ Removing Flatpak: $TARGET..."
             flatpak uninstall --system -y "$TARGET"
@@ -174,7 +173,6 @@ case "$COMMAND" in
             exit 0
         fi
 
-        # --- DEBIAN REMOVAL ---
         ensure_container
         echo "🗑️ Removing Debian package: $TARGET..."
         distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get remove -y $TARGET"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Certux Universal Engine v8.5 - "Silent API Routing"
+# Certux Universal Engine v8.6 - "Dependency & Exception Engine"
 
 GUI_MODE=false
 if [ "$1" == "--gui" ]; then
@@ -10,9 +10,8 @@ fi
 COMMAND=$1
 shift
 
-# --- THE GLOBAL TRAFFIC COP ---
 SOURCE="Auto"
-if [ "$COMMAND" == "install" ] || [ "$COMMAND" == "remove" ] || [ "$COMMAND" == "launch" ]; then
+if [ "$COMMAND" == "install" ] || [ "$COMMAND" == "remove" ] || [ "$COMMAND" == "launch" ] || [ "$COMMAND" == "deps" ]; then
     if [ "$1" == "Flatpak" ] || [ "$1" == "Debian" ]; then
         SOURCE=$1
         shift
@@ -41,9 +40,9 @@ native_integration_cleanup() {
     chmod +x "$REAL_DESKTOP_DIR/"*.desktop 2>/dev/null || true
 }
 
-# --- THE MACHINE-READABLE GUI OUTPUT (Writes to hidden file) ---
+# --- THE MACHINE-READABLE GUI OUTPUT ---
 if [ "$GUI_MODE" = true ]; then
-    > "$API_LOG" # Clear previous API data
+    > "$API_LOG"
     case "$COMMAND" in
         search)
             flatpak search "$TARGET" --columns=application,name,description,remotes 2>/dev/null | awk -F'\t' 'NR>1 {print "API|SEARCH|Flatpak|"$1"|"$2"|"$3"|"$4}' >> "$API_LOG"
@@ -60,6 +59,20 @@ if [ "$GUI_MODE" = true ]; then
             ensure_container >/dev/null 2>&1
             distrobox-enter -n "$CONTAINER_NAME" -- bash -c "grep -E '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null" | awk '{print "API|REPO|Debian|"$0}' >> "$API_LOG"
             ;;
+        deps)
+            # THE NEW DEPENDENCY RESOLVER
+            if [ "$SOURCE" == "Flatpak" ]; then
+                RUNTIME=$(flatpak info "$TARGET" 2>/dev/null | grep "Runtime:" | awk '{print $2}')
+                SDK=$(flatpak info "$TARGET" 2>/dev/null | grep "Sdk:" | awk '{print $2}')
+                if [ -n "$RUNTIME" ]; then echo "API|DEPS|Flatpak|$RUNTIME|Flatpak Runtime Base|System Component" >> "$API_LOG"; fi
+                if [ -n "$SDK" ]; then echo "API|DEPS|Flatpak|$SDK|Flatpak SDK Base|System Component" >> "$API_LOG"; fi
+            elif [ "$SOURCE" == "Debian" ]; then
+                ensure_container >/dev/null 2>&1
+                distrobox-enter -n "$CONTAINER_NAME" -- apt-cache depends "$TARGET" 2>/dev/null | grep "Depends:" | awk '{print $2}' | head -n 8 | while read -r dep; do
+                    echo "API|DEPS|Debian|$dep|Debian Library|System Component" >> "$API_LOG"
+                done
+            fi
+            ;;
     esac
     exit 0
 fi
@@ -71,84 +84,71 @@ case "$COMMAND" in
         pkexec rpm-ostree upgrade
         echo "✅ Core OS Upgrade complete! Please reboot to apply."
         ;;
-
     update-apps)
         echo "🔄 Upgrading App Ecosystems..."
-        echo "▶ Updating Flatpaks..."
         flatpak update -y
         if distrobox list | grep -q "$CONTAINER_NAME"; then
-            echo "▶ Updating Debian Subsystem..."
             distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y"
         fi
         echo "✅ App Ecosystems Fully Upgraded!"
         ;;
-
     launch)
         echo "🚀 Launching $TARGET from $SOURCE..."
         if [ "$SOURCE" == "Flatpak" ]; then
-            flatpak run "$TARGET" &
+            flatpak run "$TARGET"
         elif [ "$SOURCE" == "Debian" ]; then
-            distrobox-enter -n "$CONTAINER_NAME" -- "$TARGET" &
+            distrobox-enter -n "$CONTAINER_NAME" -- "$TARGET"
+        fi
+        # If the app crashes, this passes the specific error code back to the GUI
+        EXIT_CODE=$?
+        if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ Launch Exception: App crashed with code $EXIT_CODE"
+            exit $EXIT_CODE
         fi
         echo "✅ Launch signal sent."
         ;;
-
     install)
-        if [ -z "$TARGET" ]; then echo "Usage: cert install [Flatpak|Debian] <package/file>"; exit 1; fi
+        if [ -z "$TARGET" ]; then exit 1; fi
         mkdir -p "$REAL_DESKTOP_DIR"
         
         if [[ "$TARGET" == *.AppImage || "$TARGET" == *.appimage ]]; then
             BASENAME=$(basename "$TARGET")
             APP_NAME="${BASENAME%.*}"
-            echo "📥 Securing AppImage..."
             cp "$TARGET" "$REAL_DESKTOP_DIR/$BASENAME"
             chmod +x "$REAL_DESKTOP_DIR/$BASENAME"
             echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=$REAL_DESKTOP_DIR/$BASENAME\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$REAL_DESKTOP_DIR/certux-${APP_NAME}.desktop"
-            echo "✅ AppImage installed!"
             native_integration_cleanup
             exit 0
         fi
 
         if [ "$SOURCE" == "Flatpak" ] || [[ "$SOURCE" == "Auto" && "$TARGET" == *.*.* && "$TARGET" != *.deb ]]; then
             echo "📥 Installing Native Flatpak: $TARGET..."
-            if flatpak install --system -y "$TARGET"; then
-                echo "✅ Flatpak $TARGET successfully installed!"
-                exit 0
-            else
-                echo "❌ CRITICAL ERROR: Flatpak installation failed."
-                exit 1
-            fi
+            if flatpak install --system -y "$TARGET"; then exit 0; else exit 1; fi
         fi
 
         ensure_container
         if [[ -f "$TARGET" && "$TARGET" == *.deb ]]; then
             FILE_PATH=$(realpath "$TARGET")
-            echo "📥 Installing local .deb: $TARGET"
             if ! distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y '$FILE_PATH'"; then
                 distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get install -f -y"
             fi
             APP_NAME=$(distrobox enter "$CONTAINER_NAME" -- bash -c "dpkg-deb -f '$FILE_PATH' Package")
         else
-            echo "📥 Installing Debian package: $TARGET"
             if ! distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $TARGET"; then
-                echo "❌ CRITICAL ERROR: Package '$TARGET' not found."
                 exit 1
             fi
             APP_NAME="$TARGET"
         fi
         
-        echo "🔗 Bridging $APP_NAME to your desktop..."
         EXPORT_SUCCESS=false
-
         if distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $APP_NAME --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1; then
             EXPORT_SUCCESS=true
         else
             FOUND_DESKTOP=$(distrobox enter "$CONTAINER_NAME" -- bash -c "ls /usr/share/applications | grep -i '$APP_NAME' | head -n 1")
             if [ -n "$FOUND_DESKTOP" ]; then
                 CLEAN_NAME="${FOUND_DESKTOP%.desktop}"
-                if distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $CLEAN_NAME --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1; then
-                    EXPORT_SUCCESS=true
-                fi
+                distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $CLEAN_NAME --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1
+                EXPORT_SUCCESS=true
             elif distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $TARGET --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1; then
                 EXPORT_SUCCESS=true
             fi
@@ -159,25 +159,17 @@ case "$COMMAND" in
             echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=/usr/bin/distrobox-enter -n $CONTAINER_NAME -- $TARGET\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$BRUTE_DESKTOP"
         fi
 
-        echo "✅ Successfully installed and bridged!"
         native_integration_cleanup
         ;;
 
     remove)
-        if [ -z "$TARGET" ]; then echo "Usage: cert remove [Flatpak|Debian] <package>"; exit 1; fi
-
         if [ "$SOURCE" == "Flatpak" ] || flatpak list --app --columns=application | grep -q "^${TARGET}$"; then
-            echo "🗑️ Removing Flatpak: $TARGET..."
             flatpak uninstall --system -y "$TARGET"
-            echo "✅ Removed Flatpak $TARGET."
             exit 0
         fi
-
         ensure_container
-        echo "🗑️ Removing Debian package: $TARGET..."
         distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get remove -y $TARGET"
         rm -f "$REAL_DESKTOP_DIR/certux-bruteforce-${TARGET}.desktop" 2>/dev/null || true
         rm -f "$REAL_DESKTOP_DIR/${CONTAINER_NAME}-${TARGET}.desktop" 2>/dev/null || true
-        echo "✅ Removed Debian package $TARGET."
         ;;
 esac

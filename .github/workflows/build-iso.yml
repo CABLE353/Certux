@@ -1,9 +1,15 @@
 name: Build Certux ISO
 on:
-  workflow_dispatch:
+  workflow_run:
+    workflows: ["build"] # This MUST match the exact 'name:' of your main OS build workflow
+    types:
+      - completed
+  workflow_dispatch: # Keeps the manual button just in case you need it
 
 jobs:
   build-iso:
+    # Only run this if the main OS container built successfully
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo

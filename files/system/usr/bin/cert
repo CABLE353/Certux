@@ -65,7 +65,8 @@ if [ "$GUI_MODE" = true ]; then
         repo)
             echo "API|REPO|Flatpak|Flathub Universal Linux Registry" >> "$API_LOG"
             ensure_container >/dev/null 2>&1
-            distrobox-enter -n "$CONTAINER_NAME" -- bash -c "grep -E '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null" | awk '{print "API|REPO|Debian|"$0}' >> "$API_LOG"
+            # Search all source files in the apt directory
+            distrobox-enter -n "$CONTAINER_NAME" -- bash -c "grep -rE '^deb ' /etc/apt/sources.list*" | awk '{print "API|REPO|Debian|"$0}' >> "$API_LOG"
             ;;
         deps)
             if [ "$SOURCE" == "Flatpak" ]; then

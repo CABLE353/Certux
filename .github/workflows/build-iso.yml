@@ -1,16 +1,17 @@
 name: Build Certux ISO
 on:
   workflow_run:
-    workflows: ["build"] # This MUST match the exact 'name:' of your main OS build workflow
+    workflows: ["build"] # Ensure this matches the 'name:' in your build.yml
     types:
       - completed
-  workflow_dispatch: # Keeps the manual button just in case you need it
+  workflow_dispatch:
 
 jobs:
   build-iso:
-    # Only run this if the main OS container built successfully
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required for creating the Release
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -31,3 +32,12 @@ jobs:
         with:
           name: Certux-OS-Installer
           path: ./*.iso
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Certux OS Build ${{ github.run_number }}
+          files: Certux-OS-Installer.iso
+          draft: false
+          prerelease: false

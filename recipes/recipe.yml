@@ -44,7 +44,7 @@ modules:
     install:
       - 1160 # Dash to Panel (Windows Taskbar)
       - 615  # AppIndicator Support (System Tray)
-
+      - 3628 # ArcMenu (The "Start Menu")
   - type: gschema-overrides
     include:
       - 99-certux-windows.gschema.override

@@ -186,6 +186,10 @@ case "$COMMAND" in
         echo "🔄 Preparing container environment for repository management..."
         ensure_container
         
+        # --- NEW: JIT Provisioning ---
+        # Explicitly ensure the repo management tool is installed
+        distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common"
+        
         echo "➕ Adding repository: $REPO_LINE"
         if distrobox enter "$CONTAINER_NAME" -- sudo add-apt-repository -y "$REPO_LINE"; then
             echo "🔄 Refreshing package lists..."
@@ -197,7 +201,6 @@ case "$COMMAND" in
             exit 1
         fi
         ;;
-
     remove)
         if [ "$SOURCE" == "Flatpak" ] || flatpak list --app --columns=application | grep -q "^${TARGET}$"; then
             flatpak uninstall --system -y "$TARGET"

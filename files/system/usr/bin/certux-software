@@ -94,8 +94,9 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         vbox.append(self.console_revealer)
         self.set_content(vbox)
 
+        # BUG FIX: Removed "Auto" to allow local file parsing via Right-Click
         if len(sys.argv) > 1:
-            self.queue_command(f"/usr/bin/cert install Auto '{sys.argv[1]}'")
+            self.queue_command(f"/usr/bin/cert install '{sys.argv[1]}'")
             
         self.refresh_installed()
         self.refresh_repos()
@@ -328,7 +329,6 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
                 
                 dep_row = Adw.ActionRow(title=f"{d_name} [{d_source}]", subtitle=f"Type: {d_type} | ID: {d_id}")
                 
-                # Removed Action Box completely - replaced with a static text badge
                 status_label = Gtk.Label(label="<span size='small' foreground='gray'>System Component</span>", use_markup=True)
                 status_label.set_valign(Gtk.Align.CENTER)
                 dep_row.add_suffix(status_label)
@@ -418,7 +418,10 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         self.repo_entry = Gtk.Entry(placeholder_text="ppa:name/repo OR deb http://...")
         self.repo_entry.set_width_chars(40)
         add_btn = Gtk.Button(label="Add Debian Repo")
-        add_btn.connect("clicked", lambda b: self.queue_command(f"/usr/bin/cert repo add '{self.repo_entry.get_text()}'"))
+        
+        # BUG FIX: Calling the correct add-repo execution block
+        add_btn.connect("clicked", lambda b: self.queue_command(f"/usr/bin/cert add-repo '{self.repo_entry.get_text()}'"))
+        
         add_box.append(self.repo_entry)
         add_box.append(add_btn)
         box.append(add_box)
@@ -515,8 +518,9 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
                 GLib.idle_add(self.append_console, "\n✅ Task Finished Successfully.\n")
             else:
                 GLib.idle_add(self.append_console, f"\n❌ Task Failed (Error Code: {process.returncode}).\n")
-            if "install" in command or "remove" in command or "update" in command:
+            if "install" in command or "remove" in command or "update" in command or "add-repo" in command:
                 GLib.idle_add(self.refresh_installed)
+                GLib.idle_add(self.refresh_repos)
             GLib.idle_add(self.process_next_queue)
         threading.Thread(target=worker, daemon=True).start()
 

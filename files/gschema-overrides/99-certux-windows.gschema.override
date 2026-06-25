@@ -4,4 +4,9 @@ button-layout='appmenu:minimize,maximize,close'
 
 [org.gnome.shell]
 # This forces GNOME to turn your new taskbar and system tray on by default
-enabled-extensions=['dash-to-panel@jderose9.github.com', 'appindicatorsupport@rgcjonas.gmail.com']
+enabled-extensions=['dash-to-panel@jderose9.github.com', 'appindicatorsupport@rgcjonas.gmail.com', 'arcmenu@arcmenu.com']
+disable-user-extensions=false
+
+[org.gnome.shell.extensions.dash-to-panel]
+show-apps-icon-file='/usr/share/icons/gnome/scalable/apps/start-here-symbolic.svg'
+show-activities-button=false

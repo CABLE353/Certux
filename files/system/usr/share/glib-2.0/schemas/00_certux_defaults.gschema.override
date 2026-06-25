@@ -1,0 +1,7 @@
+[org.gnome.shell]
+# This explicitly tells GNOME to enable these for everyone
+enabled-extensions=['dash-to-panel@jderose9.github.com', 'appindicatorsupport@rgcjonas.gmail.com', 'arcmenu@arcmenu.com']
+
+[org.gnome.desktop.interface]
+# Optional: Set a Windows-style theme or font if you have one
+font-name='Cantarell 11'

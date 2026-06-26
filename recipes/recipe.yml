@@ -1,7 +1,7 @@
 name: certux
 description: This is my personal OS image.
 
-base-image: ghcr.io/cable353/certux:latest
+base-image: ghcr.io/ublue-os/silverblue-main:42
 image-version: 42
 
 modules:

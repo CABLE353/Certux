@@ -5,7 +5,6 @@ import sys
 import threading
 import os
 import re
-from certux_device_manager import DeviceManagerPage
 
 
 gi.require_version('Gtk', '4.0')

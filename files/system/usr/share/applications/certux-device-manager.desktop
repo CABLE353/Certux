@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Certux Device Manager
+Exec=/usr/bin/certux-device-manager
+Icon=computer-symbolic
+Type=Application
+Categories=System;Settings;
+Terminal=false

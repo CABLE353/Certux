@@ -40,6 +40,8 @@ modules:
 
       - "chmod +x /usr/bin/certux-software"
 
+      - "chmod +x /usr/bin/certux-device-manager"
+
       - "chmod +x /usr/bin/certux-law-setup"
 
 

@@ -1,45 +1,85 @@
 name: certux
+
 description: This is my personal OS image.
 
-base-image: ghcr.io/ublue-os/silverblue-main:42
+
+
+base-image: ghcr.io/ublue-os/silverblue-main
+
 image-version: 42
 
+
+
 modules:
+
   - type: files
+
     files:
+
       - source: system
+
         destination: /
 
+
+
   - type: systemd
+
     user:
+
       enabled:
+
         - certux-update-cache.service
 
+
+
   - type: script
+
     snippets:
+
       - "chmod +x /usr/bin/cert"
+
       - "chmod +x /usr/bin/certux-software"
+
       - "chmod +x /usr/bin/certux-law-setup"
 
+
+
   - type: dnf
+
     repos:
+
       copr:
+
         - atim/starship
+
     install:
+
       packages:
+
         - micro
+
         - starship
+
         - distrobox
+
         - python3-gobject
+
         - gnome-extensions-app
+
     remove:
+
       packages:
+
         - firefox
+
         - firefox-langpacks
+
         - gnome-software
+
         - gnome-software-plugin-flatpak
 
-  # --- NEW: Windows UI Transformation ---
+
+# --- NEW: Windows UI Transformation ---
   - type: gnome-extensions
     install:
       - 1160 # Dash to Panel (Windows Taskbar)
@@ -50,11 +90,20 @@ modules:
       - 99-certux-windows.gschema.override
   # --------------------------------------
 
+
+
   - type: default-flatpaks
+
     configurations:
+
       - notify: true
+
         scope: system
+
         install:
+
           - org.mozilla.firefox
+
           - org.gnome.Loupe
+
       - scope: user

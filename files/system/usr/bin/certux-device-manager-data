@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Fetches hardware list in a format the GUI can easily parse
+echo "PCI DEVICES:"
+lspci | awk -F': ' '{print $2}'
+echo "---"
+echo "USB DEVICES:"
+lsusb | cut -d' ' -f6-

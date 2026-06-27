@@ -7,14 +7,14 @@ from gi.repository import Gtk, Adw
 import subprocess
 
 class DeviceManagerWindow(Adw.ApplicationWindow):
-def __init__(self, app):
+    def __init__(self, app):
         super().__init__(application=app, title="Certux Device Manager")
         self.set_default_size(600, 500)
         
-        # 1. Create a top-level Box to hold the header and content
+        # 1. Create a top-level Box
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         
-        # 2. Add an Adw.HeaderBar as a widget instead of setting it as a titlebar
+        # 2. Add an Adw.HeaderBar
         header = Adw.HeaderBar()
         main_box.append(header)
         
@@ -24,16 +24,16 @@ def __init__(self, app):
         
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_child(self.list_box)
-        scrolled.set_vexpand(True) # Make sure it takes up space
+        scrolled.set_vexpand(True)
         main_box.append(scrolled)
         
         self.set_content(main_box)
         self.load_devices()
 
     def load_devices(self):
-        # We query the hardware directly
         try:
-            result = subprocess.run(["lspci"], capture_output=True, text=True)
+            # Using absolute path for lspci
+            result = subprocess.run(["/usr/sbin/lspci"], capture_output=True, text=True)
             for line in result.stdout.splitlines():
                 if line:
                     self.list_box.append(Adw.ActionRow(title=line))

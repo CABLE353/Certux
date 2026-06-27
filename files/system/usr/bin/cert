@@ -1,6 +1,34 @@
 #!/usr/bin/env bash
 # Certux Universal Engine v8.8 - "Unified Dev-Ops & Hardware Control"
 
+# 1. IMMEDIATE HELP CHECK: Catch help before any shifting
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    cat << EOF
+Certux Universal Engine - Command Reference
+Usage: cert [COMMAND] [SOURCE] [TARGET]
+
+Core Commands:
+  install [SOURCE] [TARGET]  Install a package (Flatpak, Debian, or Native)
+  remove [SOURCE] [TARGET]   Remove a package
+  launch [SOURCE] [TARGET]   Launch an application
+  
+System Commands:
+  update-sys                 Upgrade the core OS (rpm-ostree)
+  update-apps                Upgrade Flatpaks and Container apps
+  add-repo [REPO_LINE]       Add a new Debian repository
+  toggle-driver [MOD] [ACT]  Enable/Disable kernel modules (load/unload)
+  
+Status & Info:
+  repo                       List all configured repositories
+  list                       List installed applications
+  search [QUERY]             Search for packages
+  deps [SOURCE] [TARGET]     List application dependencies
+  -h, --help                 Show this help message
+EOF
+    exit 0
+fi
+
+# 2. GUI MODE DETECTION
 GUI_MODE=false
 if [ "$1" == "--gui" ]; then
     GUI_MODE=true
@@ -26,31 +54,6 @@ CONTAINER_NAME="certux-legacy-layer"
 BASE_IMAGE="debian:latest"
 REAL_DESKTOP_DIR="$HOME/.local/share/applications"
 API_LOG="/tmp/certux_api"
-
-show_help() {
-    cat << EOF
-Certux Universal Engine - Command Reference
-Usage: cert [COMMAND] [SOURCE] [TARGET]
-
-Core Commands:
-  install [SOURCE] [TARGET]  Install a package (Flatpak, Debian, or Native)
-  remove [SOURCE] [TARGET]   Remove a package
-  launch [SOURCE] [TARGET]   Launch an application
-  
-System Commands:
-  update-sys                 Upgrade the core OS (rpm-ostree)
-  update-apps                Upgrade Flatpaks and Container apps
-  add-repo [REPO_LINE]       Add a new Debian repository
-  toggle-driver [MOD] [ACT]  Enable/Disable kernel modules (load/unload)
-  
-Status & Info:
-  repo                       List all configured repositories
-  list                       List installed applications
-  search [QUERY]             Search for packages
-  deps [SOURCE] [TARGET]     List application dependencies
-  -h, --help                 Show this help message
-EOF
-}
 
 ensure_container() {
     if ! distrobox list | grep -q "$CONTAINER_NAME"; then
@@ -109,8 +112,6 @@ if [ "$GUI_MODE" = true ]; then
 fi
 
 # --- STANDARD EXECUTION ENGINE ---
-if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then show_help; exit 0; fi
-
 case "$COMMAND" in
     update-sys)
         if pkexec rpm-ostree upgrade; then echo "✅ OS Updated."; else exit 1; fi
@@ -140,7 +141,6 @@ case "$COMMAND" in
         else
             ensure_container
             distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $TARGET"
-            # Attempt export
             distrobox enter "$CONTAINER_NAME" -- distrobox-export --app "$TARGET" --export-path "$REAL_DESKTOP_DIR" > /dev/null 2>&1 || true
             native_integration_cleanup
         fi
@@ -161,6 +161,7 @@ case "$COMMAND" in
         fi
         ;;
     *)
-        show_help
+        echo "Error: Command not recognized. Use 'cert --help' for usage."
+        exit 1
         ;;
 esac

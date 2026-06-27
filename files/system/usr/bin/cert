@@ -11,6 +11,7 @@ COMMAND=$1
 shift
 
 SOURCE="Auto"
+# Handle the source argument if provided
 if [ "$COMMAND" == "install" ] || [ "$COMMAND" == "remove" ] || [ "$COMMAND" == "launch" ] || [ "$COMMAND" == "deps" ]; then
     if [ "$1" == "Flatpak" ] || [ "$1" == "Debian" ]; then
         SOURCE=$1
@@ -31,14 +32,18 @@ show_help() {
 Certux Universal Engine - Command Reference
 Usage: cert [COMMAND] [SOURCE] [TARGET]
 
-Commands:
+Core Commands:
   install [SOURCE] [TARGET]  Install a package (Flatpak, Debian, or Native)
   remove [SOURCE] [TARGET]   Remove a package
   launch [SOURCE] [TARGET]   Launch an application
+  
+System Commands:
   update-sys                 Upgrade the core OS (rpm-ostree)
   update-apps                Upgrade Flatpaks and Container apps
   add-repo [REPO_LINE]       Add a new Debian repository
   toggle-driver [MOD] [ACT]  Enable/Disable kernel modules (load/unload)
+  
+Status & Info:
   repo                       List all configured repositories
   list                       List installed applications
   search [QUERY]             Search for packages
@@ -122,7 +127,12 @@ case "$COMMAND" in
     install)
         if [ -z "$TARGET" ]; then exit 1; fi
         if [[ "$TARGET" == *.AppImage ]]; then
-            # ... (Keep your existing AppImage logic)
+            BASENAME=$(basename "$TARGET")
+            APP_NAME="${BASENAME%.*}"
+            cp "$TARGET" "$REAL_DESKTOP_DIR/$BASENAME"
+            chmod +x "$REAL_DESKTOP_DIR/$BASENAME"
+            echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=$REAL_DESKTOP_DIR/$BASENAME\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$REAL_DESKTOP_DIR/certux-${APP_NAME}.desktop"
+            native_integration_cleanup
             exit 0
         fi
         if [ "$SOURCE" == "Flatpak" ] || [[ "$SOURCE" == "Auto" && "$TARGET" == *.*.* ]]; then
@@ -130,7 +140,9 @@ case "$COMMAND" in
         else
             ensure_container
             distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $TARGET"
-            # ... (Keep your existing export logic)
+            # Attempt export
+            distrobox enter "$CONTAINER_NAME" -- distrobox-export --app "$TARGET" --export-path "$REAL_DESKTOP_DIR" > /dev/null 2>&1 || true
+            native_integration_cleanup
         fi
         ;;
     add-repo)
@@ -141,6 +153,14 @@ case "$COMMAND" in
         if [ "$2" == "unload" ]; then pkexec modprobe -r "$1"; else pkexec modprobe "$1"; fi
         ;;
     remove)
-        # ... (Keep your existing remove logic)
+        if [ "$SOURCE" == "Flatpak" ]; then
+            flatpak uninstall --system -y "$TARGET"
+        else
+            ensure_container
+            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get remove -y $TARGET"
+        fi
+        ;;
+    *)
+        show_help
         ;;
 esac

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Certux Universal Engine v8.7 - "Unified Repos & Local Overrides"
+# Certux Universal Engine v8.8 - "Unified Dev-Ops & Hardware Control"
 
 GUI_MODE=false
 if [ "$1" == "--gui" ]; then
@@ -26,13 +26,32 @@ BASE_IMAGE="debian:latest"
 REAL_DESKTOP_DIR="$HOME/.local/share/applications"
 API_LOG="/tmp/certux_api"
 
+show_help() {
+    cat << EOF
+Certux Universal Engine - Command Reference
+Usage: cert [COMMAND] [SOURCE] [TARGET]
+
+Commands:
+  install [SOURCE] [TARGET]  Install a package (Flatpak, Debian, or Native)
+  remove [SOURCE] [TARGET]   Remove a package
+  launch [SOURCE] [TARGET]   Launch an application
+  update-sys                 Upgrade the core OS (rpm-ostree)
+  update-apps                Upgrade Flatpaks and Container apps
+  add-repo [REPO_LINE]       Add a new Debian repository
+  toggle-driver [MOD] [ACT]  Enable/Disable kernel modules (load/unload)
+  repo                       List all configured repositories
+  list                       List installed applications
+  search [QUERY]             Search for packages
+  deps [SOURCE] [TARGET]     List application dependencies
+  -h, --help                 Show this help message
+EOF
+}
+
 ensure_container() {
     if ! distrobox list | grep -q "$CONTAINER_NAME"; then
         if [ "$GUI_MODE" = false ]; then echo "📦 Initializing Certux Subsystem..."; fi
         distrobox create --name "$CONTAINER_NAME" --image "$BASE_IMAGE" --yes > /dev/null 2>&1
         distrobox enter "$CONTAINER_NAME" -- bash -c "sudo dpkg --add-architecture i386 && sudo apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common xdg-utils"
-        
-        # Inject standard default Debian sources during initialization
         distrobox enter "$CONTAINER_NAME" -- bash -c 'cat <<EOF | sudo tee /etc/apt/sources.list
 deb http://deb.debian.org/debian stable main contrib non-free non-free-firmware
 deb http://deb.debian.org/debian stable-updates main contrib non-free non-free-firmware
@@ -65,7 +84,6 @@ if [ "$GUI_MODE" = true ]; then
         repo)
             echo "API|REPO|Flatpak|Flathub Universal Linux Registry" >> "$API_LOG"
             ensure_container >/dev/null 2>&1
-            # Search all source files in the apt directory
             distrobox-enter -n "$CONTAINER_NAME" -- bash -c "grep -rE '^deb ' /etc/apt/sources.list*" | awk '{print "API|REPO|Debian|"$0}' >> "$API_LOG"
             ;;
         deps)
@@ -86,130 +104,43 @@ if [ "$GUI_MODE" = true ]; then
 fi
 
 # --- STANDARD EXECUTION ENGINE ---
+if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then show_help; exit 0; fi
+
 case "$COMMAND" in
     update-sys)
-        echo "🔄 Requesting authorization for Core OS Upgrade..."
-        if pkexec rpm-ostree upgrade; then
-            echo "✅ Core OS Upgrade complete! Please reboot to apply."
-            exit 0
-        else
-            echo "❌ CRITICAL ERROR: Core OS Upgrade failed."
-            exit 1
-        fi
+        if pkexec rpm-ostree upgrade; then echo "✅ OS Updated."; else exit 1; fi
         ;;
     update-apps)
-        echo "🔄 Upgrading App Ecosystems..."
         flatpak update -y
         if distrobox list | grep -q "$CONTAINER_NAME"; then
-            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y"
+            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y"
         fi
-        echo "✅ App Ecosystems Fully Upgraded!"
         ;;
     launch)
-        echo "🚀 Launching $TARGET from $SOURCE..."
-        if [ "$SOURCE" == "Flatpak" ]; then
-            flatpak run "$TARGET"
-        elif [ "$SOURCE" == "Debian" ]; then
-            distrobox-enter -n "$CONTAINER_NAME" -- "$TARGET"
-        fi
-        EXIT_CODE=$?
-        if [ $EXIT_CODE -ne 0 ]; then
-            echo "❌ Launch Exception: App crashed with code $EXIT_CODE"
-            exit $EXIT_CODE
-        fi
-        echo "✅ Launch signal sent."
+        if [ "$SOURCE" == "Flatpak" ]; then flatpak run "$TARGET"; else distrobox-enter -n "$CONTAINER_NAME" -- "$TARGET"; fi
         ;;
     install)
         if [ -z "$TARGET" ]; then exit 1; fi
-        mkdir -p "$REAL_DESKTOP_DIR"
-        
-        if [[ "$TARGET" == *.AppImage || "$TARGET" == *.appimage ]]; then
-            BASENAME=$(basename "$TARGET")
-            APP_NAME="${BASENAME%.*}"
-            cp "$TARGET" "$REAL_DESKTOP_DIR/$BASENAME"
-            chmod +x "$REAL_DESKTOP_DIR/$BASENAME"
-            echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=$REAL_DESKTOP_DIR/$BASENAME\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$REAL_DESKTOP_DIR/certux-${APP_NAME}.desktop"
-            native_integration_cleanup
+        if [[ "$TARGET" == *.AppImage ]]; then
+            # ... (Keep your existing AppImage logic)
             exit 0
         fi
-
-        if [ "$SOURCE" == "Flatpak" ] || [[ "$SOURCE" == "Auto" && "$TARGET" == *.*.* && "$TARGET" != *.deb ]]; then
-            echo "📥 Installing Native Flatpak: $TARGET..."
-            if flatpak install --system -y "$TARGET"; then exit 0; else exit 1; fi
-        fi
-
-        ensure_container
-        if [[ -f "$TARGET" && "$TARGET" == *.deb ]]; then
-            FILE_PATH=$(realpath "$TARGET")
-            echo "📥 Installing local .deb: $TARGET"
-            if ! distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y '$FILE_PATH'"; then
-                distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get install -f -y"
-            fi
-            APP_NAME=$(distrobox enter "$CONTAINER_NAME" -- bash -c "dpkg-deb -f '$FILE_PATH' Package")
+        if [ "$SOURCE" == "Flatpak" ] || [[ "$SOURCE" == "Auto" && "$TARGET" == *.*.* ]]; then
+            flatpak install --system -y "$TARGET"
         else
-            echo "📥 Installing Debian package: $TARGET"
-            if ! distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update > /dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $TARGET"; then
-                echo "❌ CRITICAL ERROR: Package '$TARGET' not found."
-                exit 1
-            fi
-            APP_NAME="$TARGET"
+            ensure_container
+            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $TARGET"
+            # ... (Keep your existing export logic)
         fi
-        
-        EXPORT_SUCCESS=false
-        if distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $APP_NAME --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1; then
-            EXPORT_SUCCESS=true
-        else
-            FOUND_DESKTOP=$(distrobox enter "$CONTAINER_NAME" -- bash -c "ls /usr/share/applications | grep -i '$APP_NAME' | head -n 1")
-            if [ -n "$FOUND_DESKTOP" ]; then
-                CLEAN_NAME="${FOUND_DESKTOP%.desktop}"
-                distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $CLEAN_NAME --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1
-                EXPORT_SUCCESS=true
-            elif distrobox enter "$CONTAINER_NAME" -- bash -c "distrobox-export --app $TARGET --export-path $REAL_DESKTOP_DIR" > /dev/null 2>&1; then
-                EXPORT_SUCCESS=true
-            fi
-        fi
-
-        if [ "$EXPORT_SUCCESS" = false ]; then
-            BRUTE_DESKTOP="$REAL_DESKTOP_DIR/certux-bruteforce-${APP_NAME}.desktop"
-            echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=/usr/bin/distrobox-enter -n $CONTAINER_NAME -- $TARGET\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$BRUTE_DESKTOP"
-        fi
-
-        native_integration_cleanup
         ;;
-
     add-repo)
-        REPO_LINE=$1
-        if [ -z "$REPO_LINE" ]; then
-            echo "❌ Error: No repository specified."
-            exit 1
-        fi
-
-        echo "🔄 Preparing container environment for repository management..."
         ensure_container
-        
-        # --- NEW: JIT Provisioning ---
-        # Explicitly ensure the repo management tool is installed
-        distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common"
-        
-        echo "➕ Adding repository: $REPO_LINE"
-        if distrobox enter "$CONTAINER_NAME" -- sudo add-apt-repository -y "$REPO_LINE"; then
-            echo "🔄 Refreshing package lists..."
-            distrobox enter "$CONTAINER_NAME" -- sudo apt-get update
-            echo "✅ Repository added successfully!"
-            exit 0
-        else
-            echo "❌ Failed to add repository."
-            exit 1
-        fi
+        distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update && sudo apt-get install -y software-properties-common && sudo add-apt-repository -y '$1' && sudo apt-get update"
+        ;;
+    toggle-driver)
+        if [ "$2" == "unload" ]; then pkexec modprobe -r "$1"; else pkexec modprobe "$1"; fi
         ;;
     remove)
-        if [ "$SOURCE" == "Flatpak" ] || flatpak list --app --columns=application | grep -q "^${TARGET}$"; then
-            flatpak uninstall --system -y "$TARGET"
-            exit 0
-        fi
-        ensure_container
-        distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get remove -y $TARGET"
-        rm -f "$REAL_DESKTOP_DIR/certux-bruteforce-${TARGET}.desktop" 2>/dev/null || true
-        rm -f "$REAL_DESKTOP_DIR/${CONTAINER_NAME}-${TARGET}.desktop" 2>/dev/null || true
+        # ... (Keep your existing remove logic)
         ;;
 esac

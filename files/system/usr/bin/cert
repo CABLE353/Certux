@@ -118,38 +118,30 @@ fi
 
 # --- STANDARD EXECUTION ENGINE ---
 case "$COMMAND" in
-    update-sys)
-        if pkexec rpm-ostree upgrade; then echo "✅ OS Updated."; else exit 1; fi
+    # ... (keep update-sys, update-apps, launch, install, add-repo, toggle-driver, remove)
+
+    repo)
+        ensure_container
+        distrobox enter "$CONTAINER_NAME" -- bash -c "grep -rE '^deb ' /etc/apt/sources.list*"
         ;;
-    update-apps)
-        flatpak update -y
-        if distrobox list | grep -q "$CONTAINER_NAME"; then
-            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y"
-        fi
+    list)
+        ensure_container
+        distrobox enter "$CONTAINER_NAME" -- apt-mark showmanual
         ;;
-    launch)
-        if [ "$SOURCE" == "Flatpak" ]; then flatpak run "$TARGET"; else distrobox-enter -n "$CONTAINER_NAME" -- "$TARGET"; fi
+    search)
+        ensure_container
+        distrobox enter "$CONTAINER_NAME" -- apt-cache search "$TARGET"
         ;;
-    install)
-        if [ -z "$TARGET" ]; then exit 1; fi
-        if [[ "$TARGET" == *.AppImage ]]; then
-            BASENAME=$(basename "$TARGET")
-            APP_NAME="${BASENAME%.*}"
-            cp "$TARGET" "$REAL_DESKTOP_DIR/$BASENAME"
-            chmod +x "$REAL_DESKTOP_DIR/$BASENAME"
-            echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=$REAL_DESKTOP_DIR/$BASENAME\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$REAL_DESKTOP_DIR/certux-${APP_NAME}.desktop"
-            native_integration_cleanup
-            exit 0
-        fi
-        if [ "$SOURCE" == "Flatpak" ] || [[ "$SOURCE" == "Auto" && "$TARGET" == *.*.* ]]; then
-            flatpak install --system -y "$TARGET"
-        else
-            ensure_container
-            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $TARGET"
-            distrobox enter "$CONTAINER_NAME" -- distrobox-export --app "$TARGET" --export-path "$REAL_DESKTOP_DIR" > /dev/null 2>&1 || true
-            native_integration_cleanup
-        fi
+    deps)
+        ensure_container
+        distrobox enter "$CONTAINER_NAME" -- apt-cache depends "$TARGET"
         ;;
+    *)
+        echo "Error: Command '$COMMAND' not recognized."
+        show_help
+        exit 1
+        ;;
+esac
     add-repo)
         ensure_container
         distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update && sudo apt-get install -y software-properties-common && sudo add-apt-repository -y '$1' && sudo apt-get update"

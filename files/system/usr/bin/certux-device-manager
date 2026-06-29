@@ -31,15 +31,29 @@ class DeviceManagerWindow(Adw.ApplicationWindow):
         self.load_devices()
 
     def load_devices(self):
-        try:
-            # Using absolute path for lspci
-            result = subprocess.run(["/usr/sbin/lspci"], capture_output=True, text=True)
-            for line in result.stdout.splitlines():
-                if line:
-                    self.list_box.append(Adw.ActionRow(title=line))
-        except Exception as e:
-            self.list_box.append(Adw.ActionRow(title=f"Error: {str(e)}"))
+        # We run the command and parse the module name
+        # Format: Name | DriverModule | Status
+        result = subprocess.run(["/usr/sbin/lspci", "-k"], capture_output=True, text=True)
+        
+        # Simple parser logic for demo purposes
+        for line in result.stdout.splitlines():
+            if "Kernel driver in use:" in line:
+                driver = line.split(": ")[1]
+                
+                # Create the UI Row
+                row = Adw.ActionRow(title=f"Driver: {driver}")
+                switch = Gtk.Switch()
+                switch.set_active(True) # Assuming active if found
+                switch.connect("state-set", self.on_switch_toggled, driver)
+                
+                row.add_suffix(switch)
+                self.list_box.append(row)
 
+    def on_switch_toggled(self, switch, state, driver):
+        action = "load" if state else "unload"
+        # Call your new cert backend
+        subprocess.run(["pkexec", "cert", "toggle-driver", driver, action])
+        return False # Propagate the event
 class DeviceManagerApp(Adw.Application):
     def __init__(self):
         super().__init__(application_id="com.certux.device-manager")

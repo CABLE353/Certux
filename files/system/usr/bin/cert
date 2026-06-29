@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Certux Universal Engine v8.8 - "Unified Dev-Ops & Hardware Control"
 
-# 1. IMMEDIATE HELP CHECK: Catch help before any shifting
-if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+# 1. DEFINE HELP FUNCTION FIRST
+show_help() {
     cat << EOF
 Certux Universal Engine - Command Reference
 Usage: cert [COMMAND] [SOURCE] [TARGET]
@@ -25,10 +25,15 @@ Status & Info:
   deps [SOURCE] [TARGET]     List application dependencies
   -h, --help                 Show this help message
 EOF
+}
+
+# 2. IMMEDIATE HELP CHECK
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    show_help
     exit 0
 fi
 
-# 2. GUI MODE DETECTION
+# 3. GUI MODE DETECTION
 GUI_MODE=false
 if [ "$1" == "--gui" ]; then
     GUI_MODE=true
@@ -161,7 +166,7 @@ case "$COMMAND" in
         fi
         ;;
     *)
-        echo "Error: Command not recognized. Use 'cert --help' for usage."
+        show_help
         exit 1
         ;;
 esac

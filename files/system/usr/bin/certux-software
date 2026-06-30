@@ -402,6 +402,14 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
     # TAB 3: REPOS PAGE
     # ==========================================
     def create_repo_page(self):
+        def on_add_repo_clicked(self, button):
+    repo_text = self.repo_entry.get_text().strip()
+    if not repo_text:
+        return
+    # Use a list to avoid shell injection issues with spaces or special chars
+    cmd = f"/usr/bin/cert add-repo '{repo_text}'"
+    self.queue_command(cmd)
+    self.repo_entry.set_text("")
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
         box.set_margin_top(20)
         box.set_margin_start(40)
@@ -421,7 +429,7 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         add_btn = Gtk.Button(label="Add Debian Repo")
         
         # BUG FIX: Calling the correct add-repo execution block
-        add_btn.connect("clicked", lambda b: self.queue_command(f"/usr/bin/cert add-repo '{self.repo_entry.get_text()}'"))
+        add_btn.connect("clicked", self.on_add_repo_clicked)
         
         add_box.append(self.repo_entry)
         add_box.append(add_btn)

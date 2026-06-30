@@ -33,28 +33,34 @@ if [[ "$1" == "-h" || "$1" == "--help" ]]; then
     exit 0
 fi
 
-# 3. GUI MODE DETECTION
+# 1. HELP CHECK (Already at the top)
+
+# 2. GUI MODE DETECTION
 GUI_MODE=false
 if [ "$1" == "--gui" ]; then
     GUI_MODE=true
     shift
 fi
 
-COMMAND=$1
-shift
+# 3. COMMAND CAPTURE
+# If we have no arguments, show help
+if [ -z "$1" ]; then show_help; exit 0; fi
 
+COMMAND=$1
+shift # Command is now stored, we shift once
+
+# 4. TARGET/SOURCE DETECTION
+TARGET=$1
 SOURCE="Auto"
-# Handle the source argument if provided
-if [ "$COMMAND" == "install" ] || [ "$COMMAND" == "remove" ] || [ "$COMMAND" == "launch" ] || [ "$COMMAND" == "deps" ]; then
+
+# If the first argument was a source, assign it and shift again
+if [[ "$COMMAND" =~ ^(install|remove|launch|deps)$ ]]; then
     if [ "$1" == "Flatpak" ] || [ "$1" == "Debian" ]; then
         SOURCE=$1
         shift
+        TARGET=$1 # Move the actual target into place
     fi
 fi
-
-TARGET=$1
-EXTRA=$2
-
 CONTAINER_NAME="certux-legacy-layer"
 BASE_IMAGE="debian:latest"
 REAL_DESKTOP_DIR="$HOME/.local/share/applications"
@@ -118,8 +124,54 @@ fi
 
 # --- STANDARD EXECUTION ENGINE ---
 case "$COMMAND" in
-    # ... (keep update-sys, update-apps, launch, install, add-repo, toggle-driver, remove)
-
+    update-sys)
+        if pkexec rpm-ostree upgrade; then echo "✅ OS Updated."; else exit 1; fi
+        ;;
+    update-apps)
+        flatpak update -y
+        if distrobox list | grep -q "$CONTAINER_NAME"; then
+            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y"
+        fi
+        ;;
+    launch)
+        if [ "$SOURCE" == "Flatpak" ]; then flatpak run "$TARGET"; else distrobox-enter -n "$CONTAINER_NAME" -- "$TARGET"; fi
+        ;;
+    install)
+        if [ -z "$TARGET" ]; then exit 1; fi
+        if [[ "$TARGET" == *.AppImage ]]; then
+            BASENAME=$(basename "$TARGET")
+            APP_NAME="${BASENAME%.*}"
+            cp "$TARGET" "$REAL_DESKTOP_DIR/$BASENAME"
+            chmod +x "$REAL_DESKTOP_DIR/$BASENAME"
+            echo -e "[Desktop Entry]\nName=$APP_NAME\nExec=$REAL_DESKTOP_DIR/$BASENAME\nIcon=application-x-executable\nType=Application\nCategories=Utility;" > "$REAL_DESKTOP_DIR/certux-${APP_NAME}.desktop"
+            native_integration_cleanup
+            exit 0
+        fi
+        if [ "$SOURCE" == "Flatpak" ] || [[ "$SOURCE" == "Auto" && "$TARGET" == *.*.* ]]; then
+            flatpak install --system -y "$TARGET"
+        else
+            ensure_container
+            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $TARGET"
+            distrobox enter "$CONTAINER_NAME" -- distrobox-export --app "$TARGET" --export-path "$REAL_DESKTOP_DIR" > /dev/null 2>&1 || true
+            native_integration_cleanup
+        fi
+        ;;
+    add-repo)
+        ensure_container
+        distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update && sudo apt-get install -y software-properties-common && sudo add-apt-repository -y '$TARGET' && sudo apt-get update"
+        ;;
+    toggle-driver)
+        # Note: $TARGET is the module, $EXTRA is the action
+        if [ "$EXTRA" == "unload" ]; then pkexec modprobe -r "$TARGET"; else pkexec modprobe "$TARGET"; fi
+        ;;
+    remove)
+        if [ "$SOURCE" == "Flatpak" ]; then
+            flatpak uninstall --system -y "$TARGET"
+        else
+            ensure_container
+            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get remove -y $TARGET"
+        fi
+        ;;
     repo)
         ensure_container
         distrobox enter "$CONTAINER_NAME" -- bash -c "grep -rE '^deb ' /etc/apt/sources.list*"
@@ -138,26 +190,6 @@ case "$COMMAND" in
         ;;
     *)
         echo "Error: Command '$COMMAND' not recognized."
-        show_help
-        exit 1
-        ;;
-esac
-    add-repo)
-        ensure_container
-        distrobox enter "$CONTAINER_NAME" -- bash -c "sudo apt-get update && sudo apt-get install -y software-properties-common && sudo add-apt-repository -y '$1' && sudo apt-get update"
-        ;;
-    toggle-driver)
-        if [ "$2" == "unload" ]; then pkexec modprobe -r "$1"; else pkexec modprobe "$1"; fi
-        ;;
-    remove)
-        if [ "$SOURCE" == "Flatpak" ]; then
-            flatpak uninstall --system -y "$TARGET"
-        else
-            ensure_container
-            distrobox enter "$CONTAINER_NAME" -- bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get remove -y $TARGET"
-        fi
-        ;;
-    *)
         show_help
         exit 1
         ;;

@@ -51,9 +51,15 @@ class DeviceManagerWindow(Adw.ApplicationWindow):
 
     def on_switch_toggled(self, switch, state, driver):
         action = "load" if state else "unload"
-        # Call your new cert backend
-        subprocess.run(["pkexec", "cert", "toggle-driver", driver, action])
-        return False # Propagate the event
+        result = subprocess.run(["pkexec", "cert", "toggle-driver", driver, action], 
+                                capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            # Revert the switch since the command failed
+            switch.set_active(not state)
+            # Show a nice warning dialog
+            self.show_error_dialog("Driver Busy", "This driver is currently in use.")
+        return False
 class DeviceManagerApp(Adw.Application):
     def __init__(self):
         super().__init__(application_id="com.certux.device-manager")

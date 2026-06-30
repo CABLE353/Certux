@@ -440,7 +440,7 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
     def on_add_repo_clicked(self, button):
         repo_text = self.repo_entry.get_text().strip()
         if not repo_text:
-        return
+                return
         # Use a list to avoid shell injection issues with spaces or special chars
         cmd = f"/usr/bin/cert add-repo '{repo_text}'"
         self.queue_command(cmd)

@@ -461,20 +461,23 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
             GLib.idle_add(self.populate_repos, results_data)
         threading.Thread(target=worker, daemon=True).start()
 
-    def populate_repos(self, results_data):
+def populate_repos(self, results_data):
         self._clear_list(self.repo_list)
         has_results = False
         for line in results_data:
-            has_results = True
-            parts = line.split('|', 3)
+            parts = line.split('|')
             if len(parts) >= 4:
-                source, url = parts[2], parts[3]
+                has_results = True
+                source = parts[2]
+                # Join everything after the source as the URL/Description
+                url = " ".join(parts[3:]) 
+                
                 row = Adw.ActionRow(title=url, subtitle=f"Source: {source} Registry")
                 status = Gtk.Label(label="<span size='small' foreground='green'>● Active</span>", use_markup=True)
                 status.set_valign(Gtk.Align.CENTER)
                 row.add_suffix(status)
                 self.repo_list.append(row)
-                
+        
         if not has_results:
             self.repo_list.append(Adw.ActionRow(title="No repositories found."))
 

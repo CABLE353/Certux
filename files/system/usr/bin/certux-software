@@ -438,13 +438,14 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         return box
 
     def on_add_repo_clicked(self, button):
-    repo_text = self.repo_entry.get_text().strip()
-    if not repo_text:
+        repo_text = self.repo_entry.get_text().strip()
+        if not repo_text:
         return
-    # Use a list to avoid shell injection issues with spaces or special chars
-    cmd = f"/usr/bin/cert add-repo '{repo_text}'"
-    self.queue_command(cmd)
-    self.repo_entry.set_text("")
+        # Use a list to avoid shell injection issues with spaces or special chars
+        cmd = f"/usr/bin/cert add-repo '{repo_text}'"
+        self.queue_command(cmd)
+        self.repo_entry.set_text("")
+
     def refresh_repos(self):
         self._clear_list(self.repo_list)
         self.repo_list.append(Adw.ActionRow(title="Scanning repositories..."))

@@ -461,7 +461,7 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
             GLib.idle_add(self.populate_repos, results_data)
         threading.Thread(target=worker, daemon=True).start()
 
-def populate_repos(self, results_data):
+    def populate_repos(self, results_data):
         self._clear_list(self.repo_list)
         has_results = False
         for line in results_data:

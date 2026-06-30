@@ -101,13 +101,14 @@ if [ "$GUI_MODE" = true ]; then
             distrobox-enter -n "$CONTAINER_NAME" -- apt-mark showmanual 2>/dev/null | awk '{print "API|LIST|Debian|"$1"|"$1"|Debian Sandbox"}' >> "$API_LOG"
             ;;
         repo)
-        # 1. Show Flatpak remotes
-        flatpak remotes --columns=name,url | awk '{print "API|REPO|Flatpak|"$0}' >> "$API_LOG"
+            # 1. Flatpak
+            flatpak remotes --columns=name,url | awk '{print "API|REPO|Flatpak|"$0}' >> "$API_LOG"
         
-        # 2. Show all Debian sources (including those in sources.list.d/)
-        ensure_container
-        distrobox enter "$CONTAINER_NAME" -- bash -c "grep -rhE '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/" | awk '{print "API|REPO|Debian|"$0}' >> "$API_LOG"
-        ;;
+            # 2. Debian - Force clean output without file paths
+            ensure_container
+            distrobox enter "$CONTAINER_NAME" -- bash -c "grep -hE '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null" | \
+            awk '{print "API|REPO|Debian|"$0}' >> "$API_LOG"
+            ;;
         deps)
             if [ "$SOURCE" == "Flatpak" ]; then
                 RUNTIME=$(flatpak info "$TARGET" 2>/dev/null | grep "Runtime:" | awk '{print $2}')

@@ -465,21 +465,34 @@ class CertuxSoftwareWindow(Adw.ApplicationWindow):
         self._clear_list(self.repo_list)
         has_results = False
         for line in results_data:
+            # Format: API | REPO | Source | ...data...
             parts = line.split('|')
-            if len(parts) >= 4:
-                has_results = True
-                source = parts[2]
-                # Join everything after the source as the URL/Description
-                url = " ".join(parts[3:]) 
+            if len(parts) < 3: continue
+            
+            has_results = True
+            source = parts[2]
+            
+            if source == "Flatpak":
+                name, url = parts[3], parts[4]
+                row = Adw.ActionRow(title=url, subtitle=f"Source: {name} (Flatpak)")
+            else:
+                # Debian lines are one long string after the source
+                url = " ".join(parts[3:])
+                row = Adw.ActionRow(title=url, subtitle="Source: Debian Repository")
                 
-                row = Adw.ActionRow(title=url, subtitle=f"Source: {source} Registry")
-                status = Gtk.Label(label="<span size='small' foreground='green'>● Active</span>", use_markup=True)
-                status.set_valign(Gtk.Align.CENTER)
-                row.add_suffix(status)
-                self.repo_list.append(row)
+                # Add the missing Remove button for Debian
+                rem_btn = Gtk.Button(icon_name="user-trash-symbolic")
+                rem_btn.add_css_class("destructive-action")
+                rem_btn.connect("clicked", lambda b, u=url: self.queue_command(f"/usr/bin/cert remove-repo '{u}'"))
+                row.add_suffix(rem_btn)
+
+            status = Gtk.Label(label="<span size='small' foreground='green'>● Active</span>", use_markup=True)
+            status.set_valign(Gtk.Align.CENTER)
+            row.add_suffix(status)
+            self.repo_list.append(row)
         
         if not has_results:
-            self.repo_list.append(Adw.ActionRow(title="No repositories found."))
+            self.repo_list.append(Adw.ActionRow(title="No repositories found.")))
 
     # ==========================================
     # CORE BATCH PROCESSOR & PROGRESS TRACKER

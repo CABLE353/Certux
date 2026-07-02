@@ -188,6 +188,12 @@ case "$COMMAND" in
         ensure_container
         distrobox enter "$CONTAINER_NAME" -- apt-cache search "$TARGET"
         ;;
+    remove-repo)
+        ensure_container
+        # Escape the URL properly to prevent sed errors
+        ESCAPED_URL=$(echo "$TARGET" | sed 's/\//\\\//g')
+        distrobox enter "$CONTAINER_NAME" -- bash -c "sudo sed -i '/$ESCAPED_URL/d' /etc/apt/sources.list /etc/apt/sources.list.d/*.list && sudo apt-get update"
+        ;;
     deps)
         ensure_container
         distrobox enter "$CONTAINER_NAME" -- apt-cache depends "$TARGET"
